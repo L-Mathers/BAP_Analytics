@@ -1,0 +1,172 @@
+{
+    "targets": {
+        
+        "CYCLING": [
+            {
+                "key": "capacity_ch_cc",
+                "group_type": "charge",
+                "full_cycle": true,
+                "interest_variable": "cc_capacity",
+                "per_cycle": true
+            },
+            {
+                "key": "capacity_ch_cv",
+                "group_type": "charge",
+                "full_cycle": true,
+                "interest_variable": "cv_capacity",
+                "per_cycle": true
+            },
+            {
+                "key": "capacity_ch_total",
+                "group_type": "charge",
+                "interest_variable": "capacity",
+                "per_cycle": true
+            },
+            {
+                "key": "capacity_dch_cc",
+                "group_type": "discharge",
+                "interest_variable": "cc_capacity",
+                "per_cycle": true
+            },
+            {
+                "key": "capacity_dch_cv",
+                "group_type": "discharge",
+                "interest_variable": "cv_capacity",
+                "per_cycle": true
+            },
+            {
+                "key": "capacity_dch_total",
+                "group_type": "discharge",
+                "interest_variable": "capacity",
+                "per_cycle": true
+            },
+            {
+                "key": "relative_capacity_dch_total",
+                "group_type": "discharge",
+                "interest_variable": "capacity",
+                "per_cycle": true
+            },
+            {
+                "key": "energy_ch_cc",
+                "group_type": "charge",
+                "interest_variable": "cc_energy",
+                "per_cycle": true
+            },
+            {
+                "key": "energy_ch_cv",
+                "group_type": "charge",
+                "interest_variable": "cv_energy",
+                "per_cycle": true
+            },
+            {
+                "key": "energy_ch_total",
+                "group_type": "charge",
+                "interest_variable": "energy",
+                "per_cycle": true
+            },
+            {
+                "key": "energy_dch_cc",
+                "group_type": "discharge",
+                "interest_variable": "cc_energy",
+                "per_cycle": true
+            },
+            {
+                "key": "energy_dch_cv",
+                "group_type": "discharge",
+                "interest_variable": "cv_energy",
+                "per_cycle": true
+            },
+            {
+                "key": "energy_dch_total",
+                "group_type": "discharge",
+                "interest_variable": "energy",
+                "per_cycle": true
+            },
+            {
+                "key": "relative_energy_dch_total",
+                "group_type": "discharge",
+                "interest_variable": "energy",
+                "per_cycle": true
+            },
+            {
+                "key": "average_voltage_ch_cc",
+                "group_type": "charge",
+                "interest_variable": "ave_cc_u",
+                "per_cycle": true
+            },
+            {
+                "key": "average_voltage_dch_cc",
+                "group_type": "discharge",
+                "interest_variable": "ave_cc_u",
+                "per_cycle": true
+            },
+            {
+                "key": "U_min",
+                "group_type": "discharge",
+                "interest_variable": "u_min",
+                "per_cycle": true
+                
+            },
+            {
+                "key": "U_max",
+                "group_type": "charge",
+                "interest_variable": "u_max",
+                "per_cycle": true
+              
+
+            },
+            {
+                "key": "T_max_ch",
+                "group_type": "charge",
+                "interest_variable": "max_temp",
+                "per_cycle": true
+            },
+            {
+                "key": "T_max_dch",
+                "group_type": "discharge",
+                "interest_variable": "max_temp",
+                "per_cycle": true
+            },
+            {
+                "key": "t_ch_total",
+                "group_type": "charge",
+                "interest_variable": "duration",
+                "per_cycle": true
+            },
+            {
+                "key": "t_dch_total",
+                "group_type": "discharge",
+                "interest_variable": "duration",
+                "per_cycle": true
+            },
+            {
+                "key": "I_max_ch",
+                "group_type": "charge",
+                "interest_variable": "i_max",
+                "per_cycle": true
+            },
+            {
+                "key": "I_max_dch",
+                "group_type": "discharge",
+                "interest_variable": "i_max",
+                "per_cycle": true
+            },
+            
+            {
+                "key": "coulombic_efficiency",
+                "group_type": "charge",
+                "interest_variable": "coulombic_efficiency",
+                "per_cycle": true
+            },
+            {
+                "key": "energy_efficiency",
+                "group_type": "charge",
+                "interest_variable": "energy_efficiency",
+                "per_cycle": true
+            }
+
+        ]
+
+    }
+}
+
