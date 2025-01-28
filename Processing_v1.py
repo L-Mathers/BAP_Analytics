@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from fuzzywuzzy import process, fuzz
 
 
 
@@ -75,10 +76,32 @@ def psuedo_limit_extraction(df: pd.DataFrame, zero_current_tolerance: float = 0.
         df.drop(columns=["Adjusted Step Type"], inplace=True)
         df["group"] = (df["Step Type"] != df["Step Type"].shift()).cumsum()
 
+        # Calculate group durations based on first and last 'time' values
+        group_durations = df.groupby("group").agg(
+            start_time=("time", "first"),
+            end_time=("time", "last")
+        )
+        group_durations["duration"] = group_durations["end_time"] - group_durations["start_time"]
+
+        # Filter groups with duration > 120 seconds
+        valid_groups = group_durations[group_durations["duration"] > 60].index
+        df = df[df["group"].isin(valid_groups)].reset_index(drop=True)
         # Filter out the first and last groups if needed
         first_group = df["group"].iloc[0]
         last_group = df["group"].iloc[-1]
         filtered_groups = df[~df["group"].isin([first_group, last_group])]
+
+        # Calculate group durations based on first and last 'time' values
+        group_durations = df.groupby("group").agg(
+            start_time=("time", "first"),
+            end_time=("time", "last")
+        )
+        group_durations["duration"] = group_durations["end_time"] - group_durations["start_time"]
+
+        # Filter groups with duration > 120 seconds
+        valid_groups = group_durations[group_durations["duration"] > 60].index
+        df = df[df["group"].isin(valid_groups)].reset_index(drop=True)
+        
 
         # Compute averages for 'charge' and 'discharge' steps
         # For each group, get the last voltage value and compute the mean
@@ -206,12 +229,12 @@ def add_cv_steps(
     return df
 
 
-def assign_cycle_keys(data: list, is_zp: bool):
+def assign_cycle_keys(data: list, is_rpt: bool):
     """
     This function assigns cycle numbers to paired 'charge' and 'discharge' entries in the given data.
     A cycle number is assigned when a 'charge' entry is followed by a 'discharge' entry. The pairing
     of 'charge' and 'discharge' is based on the sequence of data and optionally on whether the discharge
-    is part of a full cycle (when `is_zp` is False).
+    is part of a full cycle (when `is_rpt` is False).
 
     Args:
         data (list): A list of dictionaries, where each dictionary represents a data entry with keys such as 'group_type' and optionally 'full_cycle'.
@@ -234,7 +257,7 @@ def assign_cycle_keys(data: list, is_zp: bool):
         # If the entry is a 'discharge' and there is a 'charge' to pair it with
         elif entry["group_type"] == "discharge" and last_charge:
             # If not in 'zp' mode or the 'full_cycle' key is True, assign the cycle number
-            if not is_zp or entry.get("full_cycle", False):
+            if not is_rpt or entry.get("full_cycle", False):
                 cycle_number += 1  # Increment cycle number for the next cycle
                 # Assign the same cycle number to both the last 'charge' and current 'discharge'
                 last_charge["cycle"] = cycle_number
@@ -251,7 +274,7 @@ def find_parameters_for_section(
     targets,
     c_rate_tolerance=.2,
     raw_data=None,
-    section_name=None
+   
 ):
     """
     Merged logic:
@@ -493,7 +516,7 @@ def find_parameters_for_section(
 
 
 
-def data_extractor(df, cell_limits, config, test_type):
+def data_extractor(df, capacity, config, test_type, is_rpt):
     """
     This function processes a DataFrame containing charge, discharge, and rest cycles from a battery dataset.
     It calculates various cycle metrics, energy/capacity throughput, and assigns relevant information to each group
@@ -505,7 +528,7 @@ def data_extractor(df, cell_limits, config, test_type):
         config (dict): Configuration dictionary with mapping and other settings for output parameters.
         lifetime_config (dict): Configuration dictionary specifying targets for extracting data over a battery's lifetime.
         existing_df (pandas.DataFrame): The existing DataFrame containing previously stored cycle data.
-        is_zp (bool): Flag indicating whether to use zero-power (ZP) mode.
+        is_rpt (bool): Flag indicating whether test is an rpt.
 
     Returns:
         pandas.DataFrame: A DataFrame containing cumulative values from the new and existing data, including
@@ -514,7 +537,7 @@ def data_extractor(df, cell_limits, config, test_type):
 
     # Extract the voltage limits and nominal capacity from cell_limits
     
-    nominal_capacity = cell_limits["capacity"]
+    nominal_capacity = capacity
     first_dch_flag = False
     # Initialize variables for tracking energy and capacity throughput
     ch_energy_throughput = 0
@@ -527,12 +550,11 @@ def data_extractor(df, cell_limits, config, test_type):
 
     # Extract pseudo limits and update the DataFrame accordingly
     df, psuedo_low, psuedo_high = psuedo_limit_extraction(df)
+    print(f"Pseudo limits: {psuedo_low}, {psuedo_high}")
 
     # Add constant voltage (CV) steps depending on whether it's ZP mode or not
-    if is_zp:
-        df = add_cv_steps(df, vhigh, vlow)
-    else:
-        df = add_cv_steps(df, psuedo_high, psuedo_low)
+   
+    df = add_cv_steps(df, psuedo_high, psuedo_low)
     # Ensure the original index is preserved for future reference
     df["original_index"] = df.index
 
@@ -541,8 +563,8 @@ def data_extractor(df, cell_limits, config, test_type):
     group_data = []
 
     # Precompute voltage thresholds for defining a full cycle
-    high_voltage_threshold = vhigh * 0.95  # 5% below the high limit
-    low_voltage_threshold = vlow * 1.05  # 5% above the low limit
+    high_voltage_threshold = psuedo_high * 0.95  # 5% below the high limit
+    low_voltage_threshold = psuedo_low* 1.05  # 5% above the low limit
 
     # Initialize state of charge (SOC) and pulse counter for pulse tracking
     initial_soc = 80
@@ -697,6 +719,7 @@ def data_extractor(df, cell_limits, config, test_type):
         )
 
         if is_charge_phase.any():
+            print("Charge phase")
             # Check if it's a full charge cycle
             start_voltage = (
                 group_data[-1]["start_voltage"]
@@ -713,10 +736,11 @@ def data_extractor(df, cell_limits, config, test_type):
             # Update charge-related metrics
             if group_dict["cc_capacity"] is None:
                 group_dict["capacity"] = abs(
-                    group_df["discharge_capacity"].iloc[-1] - initial_capacity[0]
+                    group_df["charge_capacity"].iloc[-1] - initial_capacity[0]
                 )
+                
                 group_dict["energy"] = abs(
-                    group_df["discharge_energy"].iloc[-1] - initial_energy[0]
+                    group_df["charge_energy"].iloc[-1] - initial_energy[0]
                 )
                 group_dict["cc_energy"] = group_dict["energy"]
                 group_dict["cc_capacity"] = group_dict["capacity"]
@@ -729,7 +753,7 @@ def data_extractor(df, cell_limits, config, test_type):
            
 
         if is_discharge_phase.any():
-
+            print("Discharge phase")
             # Check if it's a full discharge cycle
             start_voltage = (
                 group_data[-1]["start_voltage"]
@@ -746,10 +770,10 @@ def data_extractor(df, cell_limits, config, test_type):
             # Update discharge-related metrics
             if group_dict["cc_capacity"] is None:
                 group_dict["capacity"] = abs(
-                    group_df["charge_capacity"].iloc[-1] - initial_capacity[1]
+                    group_df["discharge_capacity"].iloc[-1] - initial_capacity[1]
                 )
                 group_dict["energy"] = abs(
-                    group_df["charge_energy"].iloc[-1] - initial_energy[1]
+                    group_df["discharge_energy"].iloc[-1] - initial_energy[1]
                 )
                 group_dict["cc_energy"] = group_dict["energy"]
                 group_dict["cc_capacity"] = group_dict["capacity"]
@@ -776,6 +800,7 @@ def data_extractor(df, cell_limits, config, test_type):
 
         if not is_charge_phase.any() and not is_discharge_phase.any():
             group_dict["group_type"] = "rest"
+            print("Rest phase")
 
         # Handle SOC value for pulses and update pulse-related metrics
         if group_dict["pulse"]:
@@ -799,7 +824,7 @@ def data_extractor(df, cell_limits, config, test_type):
         group_data.append(group_dict)
 
     # Assign cycle numbers to the data and calculate total duration
-    group_data, max_cycles = assign_cycle_keys(group_data, is_zp)
+    group_data, max_cycles = assign_cycle_keys(group_data, is_rpt)
     total_duration = (
         df.loc[group_data[-1]["end_index"], "time"] / 86400
     )  # Convert time to days
@@ -811,7 +836,7 @@ def data_extractor(df, cell_limits, config, test_type):
 
     # Create a summary group with cumulative values
     summary_group = {
-        "group_number": len(group_data) + 1,
+        "group_number": len(group_data) + 2,
         "group_type": "summary",
         "max_cycles": max_cycles,
         "total_duration": total_duration,
@@ -824,9 +849,9 @@ def data_extractor(df, cell_limits, config, test_type):
         "eq_cycle": eq_cycle,
     }
     group_data.append(summary_group)
-
+ 
     # Calculate parameters that depend on two different cycles (e.g., coulombic efficiency)
-    if not is_zp:
+    if not is_rpt:
         # Create a mapping from cycles to groups
         cycle_groups = {}
         for group in group_data: 
@@ -881,12 +906,13 @@ def data_extractor(df, cell_limits, config, test_type):
                     discharge_group['total_capacity_throughput'] = total_capacity_throughput
 
     # Extract initial parameters and compute cumulative values
-
+    # for group in group_data:
+    #     print(group)
+    #     print("\n") 
     section_df = find_parameters_for_section(
         group_data,
-        config["targets"],
-        raw_data=df,
-        section_name="lifetime",
+        config["targets"][test_type],
+        raw_data=df
     )
 
     
@@ -894,13 +920,11 @@ def data_extractor(df, cell_limits, config, test_type):
     # Return the updated DataFrames
     return section_df
 
-from fuzzywuzzy import process
 
 def process_lifetime_test(
     data: pd.DataFrame,
-    cell_limits: dict,
+    combined_input: dict,
     config: dict,
-    test_type: str,
 ):
     """
     Processes a lifetime battery test, extracts relevant data such as current, voltage,
@@ -916,6 +940,16 @@ def process_lifetime_test(
     Returns:
         pandas.DataFrame: A DataFrame containing cumulative values calculated from the test data.
     """
+   
+
+    # Extract the relevant parameters from the combined input
+    test_type = combined_input.get('test_type')
+    capacity = combined_input['cell_limits']['capacity']
+
+    if test_type == 'Rate Performance Test':
+        is_rpt = True
+    else:
+        is_rpt = False
 
     # Define required columns and their canonical names
     required_columns = {
@@ -928,17 +962,25 @@ def process_lifetime_test(
         "charge_energy": ["charge energy (wh)", "energy (wh)", "cenergy"],
     }
 
-    # Fuzzy match columns in the input data to the required columns
+    # Match DataFrame columns to required columns using fuzzy matching
     matched_columns = {}
     for canonical_name, possible_names in required_columns.items():
-        # Find the best match from the possible names for each column
-        match = process.extractOne(
-            canonical_name, data.columns, scorer=process.token_sort_ratio
-        )
-        if match and match[1] >= 80:  # Set a confidence threshold
-            matched_columns[canonical_name] = match[0]
+        # Iterate over all possible names for the current canonical name
+        best_match = None
+        highest_score = 0
+        for possible_name in possible_names:
+            # Find the best match in the DataFrame columns
+            match = process.extractOne(possible_name, data.columns, scorer=fuzz.token_sort_ratio)
+            if match and match[1] > highest_score:  # Update best match if the score is higher
+                best_match = match[0]
+                highest_score = match[1]
+        if best_match and highest_score >= 80:  # Check against confidence threshold
+            matched_columns[canonical_name] = best_match
+            print(f"Matched column for {canonical_name}: {best_match}")
         else:
             raise ValueError(f"Missing or unmatched column for: {canonical_name}")
+
+        
 
     # Rename the matched columns in the DataFrame
     data = data.rename(columns={v: k for k, v in matched_columns.items()})
@@ -956,7 +998,7 @@ def process_lifetime_test(
 
     # Pass the processed data through the data_extractor function for further processing and return the results
     results = data_extractor(
-        data, cell_limits, config, test_type
+        data, capacity, config, test_type, is_rpt
     )
 
     return results

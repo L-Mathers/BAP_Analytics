@@ -1,7 +1,7 @@
 {
     "targets": {
         
-        "CYCLING": [
+        "Aging": [
             {
                 "key": "capacity_ch_cc",
                 "group_type": "charge",
