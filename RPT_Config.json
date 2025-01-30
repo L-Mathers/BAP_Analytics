@@ -1,0 +1,196 @@
+{
+    "targets": {
+
+        "RPT": [
+                    {
+                        "key": "capacity_ch_C_3_cc_3rd_cycle",
+                        "cycle": 3,
+                        "c_rate": 0.333,
+                        "group_type": "charge",
+                        "CCCV": true,
+                        "interest_variable": "cc_capacity",
+                        "per_cycle": false
+                    },
+                    {
+                        "key": "capacity_ch_C_3_cv_3rd_cycle",
+                        "cycle": 3,
+                        "c_rate": 0.333,
+                        "group_type": "charge",
+                        "CCCV": true,
+                        "interest_variable": "cv_capacity",
+                        "per_cycle": false
+                    },
+                    {
+                        "key": "energy_ch_C_3_cc_3rd_cycle",
+                        "cycle": 3,
+                        "c_rate": 0.33,
+                        "group_type": "charge",
+                        "CCCV": true,
+                        "interest_variable": "cc_energy",
+                        "per_cycle": false
+                    },
+                    {
+                        "key": "energy_ch_C_3_cv_3rd_cycle",
+                        "cycle": 3,
+                        "c_rate": 0.33,
+                        "group_type": "charge",
+                        "CCCV": true,
+                        "interest_variable": "cv_energy",
+                        "per_cycle": false
+                    },
+                    {
+                        "key": "capacity_dch_C_3_cc_3rd_cycle",
+                        "cycle": 3,
+                        "c_rate": 0.333,
+                        "group_type": "discharge",
+                        "CCCV": false,
+                        "interest_variable": "capacity",
+                        "per_cycle": false
+                    },
+                    {
+                        "key": "energy_dch_C_3_cc_3rd_cycle",
+                        "cycle": 3,
+                        "c_rate": 0.33,
+                        "group_type": "discharge",
+                        "interest_variable": "energy",
+                        "per_cycle": false
+                    },
+                    {
+                        "key": "capacity_dch_C_20_cc",
+                        "cycle": null,
+                        "c_rate": 0.05,
+                        "full_cycle": true,
+                        "group_type": "discharge",
+                        "pulse": false,
+                        "interest_variable": "capacity",
+                        "per_cycle": false
+                    },
+                    {
+                        "key": "energy_dch_C_20_cc",
+                        "cycle": null,
+                        "c_rate": 0.05,
+                        "group_type": "discharge",
+                        "pulse": false,
+                        "interest_variable": "energy",
+                        "per_cycle": false
+                    },
+                    {
+                        "key": "capacity_dch_1C_cc",
+                        "cycle": null,
+                        "c_rate": 1.0,
+                        "group_type": "discharge",
+                        "pulse": false,
+                        "interest_variable": "cc_capacity",
+                        "per_cycle": false
+                    },
+                    {
+                        "key": "energy_dch_1C_cc",
+                        "cycle": null,
+                        "c_rate": 1.0,
+                        "group_type": "discharge",
+                        "pulse": false,
+                        "interest_variable": "cc_energy",
+                        "per_cycle": false
+                    },
+                    {
+                        "key": "capacity_dch_2C_cc",
+                        "cycle": null,
+                        "c_rate": 2.0,
+                        "group_type": "discharge",
+                        "pulse": false,
+                        "interest_variable": "cc_capacity",
+                        "per_cycle": false
+                    },
+                    {
+                        "key": "energy_dch_2C_cc",
+                        "cycle": null,
+                        "c_rate": 2.0,
+                        "group_type": "discharge",
+                        "pulse": false,
+                        "interest_variable": "cc_energy",
+                        "per_cycle": false
+                    },
+                    {
+                        "key": "temperature_max_2C",
+                        "cycle": null,
+                        "c_rate": 2.0,
+                        "group_type": "discharge",
+                        "pulse": false,
+                        "interest_variable": "max_temp",
+                        "per_cycle": false
+                    },
+                    {
+                        "key": "dc_ir_50_10s",
+                        "soc": 50,
+                        "group_type": "discharge",
+                        "pulse": true,
+                        "interest_variable": "internal_resistance_10s",
+                        "per_cycle": false
+                    },
+                    {
+                        "key": "dc_ir_80_10s",
+                        "soc": 80,
+                        "group_type": "discharge",
+                        "pulse": true,
+                        "interest_variable": "internal_resistance_10s",
+                        "per_cycle": false
+                    },
+                    {
+                        "key": "dc_ir_20_10s",
+                        "soc": 20,
+                        "group_type": "discharge",
+                        "pulse": true,
+                        "interest_variable": "internal_resistance_10s",
+                        "per_cycle": false
+                    },
+                    {
+                        "key": "dc_ir_50_2s",
+                        "soc": 50,
+                        "group_type": "discharge",
+                        "pulse": true,
+                        "interest_variable": "internal_resistance_2s",
+                        "per_cycle": false
+                    },
+                    {
+                        "key": "dc_ir_80_2s",
+                        "soc": 80,
+                        "group_type": "discharge",
+                        "pulse": true,
+                        "interest_variable": "internal_resistance_2s",
+                        "per_cycle": false
+                    },
+                    {
+                        "key": "dc_ir_20_2s",
+                        "soc": 20,
+                        "group_type": "discharge",
+                        "pulse": true,
+                        "interest_variable": "internal_resistance_2s",
+                        "per_cycle": false
+                    },
+                    {
+                        "key": "dc_ir_50_01s",
+                        "soc": 50,
+                        "group_type": "discharge",
+                        "pulse": true,
+                        "interest_variable": "internal_resistance_0.1s",
+                        "per_cycle": false
+                    },
+                    {
+                        "key": "dc_ir_80_01s",
+                        "soc": 80,
+                        "group_type": "discharge",
+                        "pulse": true,
+                        "interest_variable": "internal_resistance_0.1s",
+                        "per_cycle": false
+                    },
+                    {
+                        "key": "dc_ir_20_01s",
+                        "soc": 20,
+                        "group_type": "discharge",
+                        "pulse": true,
+                        "interest_variable": "internal_resistance_0.1s",
+                        "per_cycle": false
+                    }
+                ]
+            }
+        }
