@@ -62,8 +62,11 @@ def build_dynamic_config(user_input):
     if user_input.get("voltage_relaxation", False):
         rpt_targets.append({
             "key": "pulse_relaxation_timeseries",
-            "group_type": "pulse_relaxation",
+            "group_type": "relaxation",
+            "time_series": True,
+            "interest_variable": "voltage",
             "time_series": True
+
         })
 
     # 3) pOCV timeseries (for c-rate <= 0.1)
@@ -400,91 +403,149 @@ def find_parameters_for_section(groups, targets, c_rate_tolerance=0.2, raw_data=
     # Now vertically concatenate them in the order: single-value, per-cycle, time-series
     # Because each partial DF has columns = union of all target keys, missing columns => NaN
     # We'll unify columns by specifying `join='outer'`.
-    final_df = pd.concat([df_sv, df_pc, df_ts], axis=0, join='outer', ignore_index=True)
+    # final_df = pd.concat([df_sv, df_pc, df_ts], axis=0, join='outer', ignore_index=True)
+    # 2) Collect all partials in a list for convenience
+    partial_dfs = [df_sv, df_pc, df_ts]
 
+    # 3) Create the final "column-wise appended" DataFrame
+    final_df = columnwise_stack_no_top_padding(partial_dfs)
     if final_df.empty:
         return None
     return final_df
+    
+    
 
+import numpy as np
+import pandas as pd
 
+def columnwise_stack_no_top_padding(dataframes):
+    """
+    Given a list of DataFrames that share some set of columns (possibly partial),
+    build a new wide DataFrame such that:
+      - Each column's real data starts at row=0 (no top NaNs).
+      - We append the column's data from each DF in the list, top to bottom.
+      - Finally, we pad the shorter columns with NaN at the bottom so all columns 
+        have the same length in the final DataFrame.
+    """
+
+    # 1) Gather union of all columns that appear in any partial DF
+    all_cols = set()
+    for df in dataframes:
+        all_cols.update(df.columns)
+    all_cols = sorted(all_cols)  # optional: for stable, alphabetical order
+
+    # 2) For each column, collect data top-to-bottom from each partial.
+    col_data = {}
+    for col in all_cols:
+        collected_vals = []
+        for df in dataframes:
+            if col in df.columns:
+                # Extract the series
+                series = df[col]
+
+                # Optionally drop NaN if you don't want to keep partial-DF "placeholders."
+                #   Usually we do want to keep real data, but any leading/trailing NaNs
+                #   from partial DFs can be removed if you want them truly "packed" at top:
+                # series = series.dropna()
+
+                # Extend our collected list
+                collected_vals.extend(series.tolist())
+
+        col_data[col] = collected_vals
+
+    # 3) Find the max length among columns
+    max_len = max(len(vals) for vals in col_data.values()) if col_data else 0
+
+    # 4) Pad each column’s list with NaN at the bottom
+    for col, vals in col_data.items():
+        short_by = max_len - len(vals)
+        if short_by > 0:
+            vals.extend([np.nan]*short_by)
+
+    # 5) Build final wide DF
+    final_df = pd.DataFrame(col_data)
+    return final_df
 ###############################################################################
 # HELPER to build SINGLE-VALUE partial DF in "wide" format
 ###############################################################################
 def _build_single_value_df(groups, targets, key_mapping, c_rate_tol):
-    # Gather all target keys so we know the final columns
+    """
+    Builds a wide DataFrame where each single-value target key is its own column,
+    and all real data starts at row=0 (no top padding).
+    We gather *all matching groups* for each target, top to bottom,
+    then pad each column at the *bottom* so all have the same length.
+
+    NOTE: Rows won't align across columns. Row i for Column A is not
+          the same group as Row i for Column B.
+    """
+
+    import numpy as np
+    import pandas as pd
+
+    # 1) Collect all single-value target keys (our final columns).
     all_keys = [t["key"] for t in targets]
     if not all_keys:
         return pd.DataFrame()  # no single-value targets => empty
 
-    # We'll store {column_name: []} so each column is appended row-by-row
-    column_data = {k: [] for k in all_keys}
+    # 2) Prepare a list to hold data for each column:
+    #    { "target_key": [val, val, val, ...], ... }
+    col_data = {k: [] for k in all_keys}
 
-    # For single-value, we do: each match => one new row => that column gets the value, others get NaN
+    # 3) For each target (i.e. each column), gather matches from groups
     for tgt in targets:
         tkey = tgt["key"]
-        print(f"Processing target: {tkey}")
         ivar = tgt.get("interest_variable")
         ignore_keys = {'key','interest_variable','per_cycle','aggregation','time_series'}
-        crit_keys = set(tgt.keys()) - ignore_keys
-        
-        matched_any = False
-        # find all matches
+        crit_keys  = set(tgt.keys()) - ignore_keys
+
+        # We'll accumulate all values that match this target
+        matches_for_this_target = []
+
+        # -- Check every group to see if it matches
         for grp in groups:
             match = True
             for c in crit_keys:
-                
                 tval = tgt[c]
-                if tkey =='2.0C_Dch_Capacity':
-                    print(c,tval)
                 if tval is None:
-                    continue
+                    continue  # no constraint on this key
                 gkey = key_mapping.get(c, c)
                 gval = grp.get(gkey)
-                # print(f"tval: {tval}, gval: {gval}")
-                # c_rate logic
+
                 if c == 'c_rate':
+                    # within tolerance?
                     if gval is None or abs(gval - tval) > c_rate_tol:
-                        match=False
+                        match = False
                         break
                 elif c == 'range_c_rate':
                     lo, hi = tval
                     if gval is None or not (lo <= gval <= hi):
-                        match=False
+                        match = False
                         break
                 else:
-                    # e.g. group_type='discharge'
+                    # direct equality check
                     if gval != tval:
-                        match=False
+                        match = False
                         break
-                
-            
+
+            # If matched, collect the group's interest_variable value
             if match:
-                print(f'tkey {tkey}')
-                matched_any = True
                 val = grp.get(ivar, np.nan)
-                # create a new row => fill this target's column with val, other targets with NaN
-                row_dict = {col: np.nan for col in all_keys}
-                row_dict[tkey] = val
-                # append
-                for colk in all_keys:
-                    column_data[colk].append(row_dict[colk])
+                matches_for_this_target.append(val)
 
-        if not matched_any:
-            # no matches => produce 1 row with NaN in that column
-            row_dict = {col: np.nan for col in all_keys}
-            column_data[tkey].append(np.nan)
-            for colk in all_keys:
-                column_data[colk].append(row_dict[colk])
+        # 4) Put this column's matched values into col_data[tkey]
+        col_data[tkey].extend(matches_for_this_target)
 
-    # Now we must ensure each column has the same length
-    max_len = max(len(lst) for lst in column_data.values()) if column_data else 0
-    for colk, vlist in column_data.items():
-        while len(vlist) < max_len:
-            vlist.append(np.nan)
+    # 5) Some columns may have more total matches than others, so we pad.
+    max_len = max(len(vals) for vals in col_data.values()) if col_data else 0
+    for k, vals in col_data.items():
+        diff = max_len - len(vals)
+        if diff > 0:
+            vals.extend([np.nan]*diff)
 
-    df_sv = pd.DataFrame(column_data)
+    # 6) Construct final DataFrame with columns in all_keys order
+    df_sv = pd.DataFrame(col_data, columns=all_keys)
+    print(df_sv)
     return df_sv
-
 
 ###############################################################################
 # HELPER to build PER-CYCLE partial DF in "wide" format
@@ -862,6 +923,7 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
                 if i+1 < len(group_data):
                     nxt = group_data[i+1]
                     if nxt["group_type"] == "rest":
+                        nxt["group_type"] = "relaxation"
                         print(f"Processing relaxation after pulse {gd['group_number']}...")
                         s_i2, e_i2 = nxt["start_index"], nxt["end_index"]
                         rest_df = df.loc[s_i2:e_i2, ["time","voltage"]].copy()
@@ -1027,27 +1089,28 @@ file = "/Users/liammathers/Github/BAP_Analytics/Testing/BMW_LTF_2580_002_10SOC_C
 # file = "/Users/liammathers/Downloads/EV_SKE_556_034_SOC100-0_05C-1C_Deg8_558_T25_27-12-2024_AllData.csv"
 
 
-  # Example combined input specifying test type and cell limits
-combined_input = {
-    'test_type': 'Rate Performance Test',
-    'cell_limits': {
-        "capacity": 32.5,
-    },
-    'user_input' : {
-        "pulse_durations": [1, 2, 4],
-        "voltage_relaxation": True,
-        "special_crates": [1.0, 2.0]
-    }
-}
+#   # Example combined input specifying test type and cell limits
+# combined_input = {
+#     'test_type': 'Rate Performance Test',
+#     'cell_limits': {
+#         "capacity": 32.5,
+#     },
+#     'user_input' : {
+#         "pulse_durations": [1, 2, 4],
+#         "voltage_relaxation": False,
+#         "special_crates": [1.0, 2.0]
+#     }
+# }
 
 # RPT data
 # BMW
 file = "/Users/liammathers/Desktop/Github/BAP_Analytics/Testing/20240726_150811_Z61_EVE_C1_ZPg_D00_SN14524.csv"
 # Load data
-data = pd.read_csv(file)
+
+# cal = "/Users/liammathers/Desktop/Github/BAP_Analytics/Testing/BMW_LTF_2619_001_Cal1_424_T55_25-06-2024_AllData.csv"
+# data = pd.read_csv(cal)
 
 
-kpi_rpt = process_lifetime_test(data, combined_input)
+# kpi_rpt = process_lifetime_test(data, combined_input)
 
-kpi_rpt.to_csv('/Users/liammathers/Desktop/Github/BAP_Analytics/kpi_rpt.csv', index=False)
 
