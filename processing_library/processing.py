@@ -10,14 +10,16 @@ from fuzzywuzzy import process, fuzz
 from processing_library.config_builder import build_config_for_test_type
 from processing_library.data_processing import (
     psuedo_limit_extraction,
-    add_cv_steps
+    add_cv_steps,
+    create_merged_capacity,
+    normalize_capacity
 )
 from processing_library.analysis_aggregator import find_parameters_for_section
 from processing_library.feature_extraction import (
-    build_ocv_map,
     assign_cycle_keys,
     calculate_coulombic_and_energy_eff,
-    estimate_soc
+    estimate_soc,
+    
 
 )
 
@@ -37,9 +39,8 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
     df, pseudo_high, pseudo_low = psuedo_limit_extraction(df)
     # 2) Add CV steps
     df = add_cv_steps(df, vhigh=pseudo_high, vlow=pseudo_low)
-    print(df.columns)
     # Add SOC column
-    df = estimate_soc(df)
+    df = estimate_soc(df, nom_cap=capacity)
     # Keep track of original index
     df["original_index"] = df.index
 
@@ -51,17 +52,23 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
         start_soc = gdf["soc"].iloc[0]
         end_soc = gdf["soc"].iloc[-1]
         group_type = gdf["Step Type"].iloc[0]
-        print(f"Group {gnum}: Type={group_type}, Start Voltage={start_voltage}, End Voltage={end_voltage}, Start SOC={start_soc}, End SOC={end_soc}")
     # Throughput trackers
     ch_en_thru = 0.0
     dch_en_thru = 0.0
     ch_cap_thru = 0.0
     dch_cap_thru = 0.0
     first_dch_flag = False
+    first_pulse = False
+    first_dcir = 0.0
+    
 
     # Some voltage thresholds used to determine "full cycle"
     high_thr = pseudo_high * 0.95
     low_thr = pseudo_low * 1.05
+
+    dcir_normalization = user_input.get("dcir_normalization", None)
+    nominal_normalization = user_input.get("nominal_normalization", False)
+    first_cycle_normalization = user_input.get("first_cycle_normalization", False)
 
     group_data = []
 
@@ -84,7 +91,7 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
             "end_voltage": gdf["voltage"].iloc[-1],
             "capacity": None,
             "energy": None,
-            "pulse": (dur < 40),  # Arbitrary definition
+            "pulse": (dur < 40),  
             "full_cycle": False,
             "cc_capacity": None,
             "cv_capacity": None,
@@ -100,7 +107,7 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
             "relative_energy": None,
             "coulombic_efficiency": None,
             "energy_efficiency": None,
-            "c-rate": None,
+            "crate": 0,
             "soc": gdf['soc'].iloc[0],
             "group_type": None,
             "ch_energy_throughput": None,
@@ -110,6 +117,9 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
             "dch_capacity_throughput": None,
             "total_capacity_throughput": None,
             "CCCV": False,
+            "cycle": 0,
+            "nominal_normalized_capacity": None,
+            "first_cycle_normalized_capacity": None,
         }
 
         # Detect CC-CV flag
@@ -117,11 +127,11 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
         cccv_flag = any(s in unique_steps for s in ["charge cv", "discharge cv"])
         group_dict["CCCV"] = cccv_flag
 
-        # Evaluate c-rate based on main portion
+        # Evaluate crate based on main portion
         if capacity and capacity > 0:
             if cccv_flag:
                 cc_df = gdf[gdf["Step Type"].isin(["charge", "discharge"])]
-                group_dict["c-rate"] = round(abs(cc_df["current"].mean()) / capacity, 3)
+                group_dict["crate"] = round(abs(cc_df["current"].mean()) / capacity, 3)
                 cv_idxs = gdf[gdf["Step Type"].isin(["charge cv", "discharge cv"])].index
                 if len(cv_idxs) > 0:
                     cv_start = cv_idxs[0]
@@ -158,10 +168,10 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
                         group_dict["cv_energy"] = cv_en
 
             else:
-                group_dict["c-rate"] = round(abs(gdf["current"].mean()) / capacity, 3)
+                group_dict["crate"] = round(abs(gdf["current"].mean()) / capacity, 3)
                 group_dict["ave_cc_u"] = gdf["voltage"].mean()
         else:
-            group_dict["c-rate"] = 0.0
+            group_dict["crate"] = 0.0
             group_dict["ave_cc_u"] = gdf["voltage"].mean()
 
         # Identify phase
@@ -221,10 +231,7 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
 
         group_data.append(group_dict)
 
-    # 4) Build OCV map
     pulse_durations = user_input.get("pulse_durations", [10, 2, 0.1]) if user_input else [10]
-
-    # ### SECOND PASS FOR PULSE CALCULATIONS ###
     for gd in group_data:
         if gd["pulse"]:
             s_i, e_i = gd["start_index"], gd["end_index"]
@@ -242,6 +249,13 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
                         ohms = dv / abs(I)
                         mOhms = ohms * 1000
                         gd[f"internal_resistance_{dur}s"] = mOhms
+
+                        if dcir_normalization is not None :
+                            if not first_pulse and dur in dcir_normalization[0] and gd['soc'] == dcir_normalization[1]:
+                                first_dcir = mOhms
+                                first_pulse = True
+                            elif first_pulse:
+                                gd[f"normalized_DCIR_{dur}s"] = mOhms / first_dcir
                     else:
                         gd[f"internal_resistance_{dur}s"] = None
 
@@ -258,9 +272,13 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
                     gd["relaxation_start"] = s_i2
                     gd["relaxation_end"] = e_i2
 
-    # 5) Assign cycles
+    # 5 Assign cycles
     group_data, max_cyc = assign_cycle_keys(group_data, is_rpt)
 
+    # 5.5 Normalize capacity 
+    if test_type == "Cycle Aging" or test_type == "Combined RPT/Cycling":
+        group_data = normalize_capacity(group_data, nominal_normalization, first_cycle_normalization)
+        
     # Summaries
     total_dur = 0
     if group_data:
@@ -313,7 +331,7 @@ def process_lifetime_test(data: pd.DataFrame, combined_input: dict, config: dict
 
     # 2) Merge static + dynamic config
     final_config = build_config_for_test_type(config, test_type, user_input)
-    is_rpt = (test_type == "Rate Performance Test")
+    is_rpt = (test_type == "Rate Performance Test" or test_type == "Combined RPT/Cycling")
 
     # 3) Fuzzy-match required columns
     required_cols = {
@@ -321,10 +339,10 @@ def process_lifetime_test(data: pd.DataFrame, combined_input: dict, config: dict
         "current": ["current","current (a)", 'I[A]'],
         "voltage": ["voltage","voltage (v)", 'U[V]'],
         "capacity": ["capacity","capacity (ah)","capacity (mah)"],
-        "discharge_capacity": ["discharge capacity (ah)","dcap","discharge_capacity", "Ah-Ch-Set" ],
-        "charge_capacity": ["charge capacity (ah)","ccap","charge_capacity", 'Ah-Dch-Set'],
-        "discharge_energy": ["discharge energy (wh)","denergy","discharge_energy"],
-        "charge_energy": ["charge energy (wh)","cenergy","charge_energy"]
+        "discharge_capacity": ["discharge capacity (ah)","dcap","discharge_capacity", "Ah-Dis-Set" ],
+        "charge_capacity": ["charge capacity (ah)","ccap","charge_capacity", 'Ah-Ch-Set'],
+        "discharge_energy": ["discharge energy (wh)","denergy","discharge_energy",'Line' ],
+        "charge_energy": ["charge energy (wh)","cenergy","charge_energy", 'State']
     }
 
     matched_columns = {}
@@ -342,10 +360,18 @@ def process_lifetime_test(data: pd.DataFrame, combined_input: dict, config: dict
             matched_columns[best_match] = cname
             print(f"Matched {best_match} to {cname}")
         else:
-            raise ValueError(f"Missing or unmatched column for {cname}")
+            if cname == 'capacity':
+                continue
+                
+            else:
+                raise ValueError(f"Missing or unmatched column for {cname}")
 
     # 4) Rename columns
     data = data.rename(columns=matched_columns)
+
+    if 'capacity' not in data.columns:
+        print(data.columns)
+    data = create_merged_capacity(data)
 
     # 5) Pick temperature column if present
     temp_cols = [c for c in data.columns if "temp" in c.lower() or "aux" in c.lower() or 't1' in c.lower()]

@@ -5,7 +5,7 @@ import copy
 def build_dynamic_rpt_config(base_config, user_input):
     """
     Extends the RPT (Rate Performance) config with
-    user-provided pulses, special c-rates, etc.
+    user-provided pulses, special crates, etc.
     """
     # Copy the base config so we don't mutate it in place
     updated_config = copy.deepcopy(base_config)
@@ -34,7 +34,6 @@ def build_dynamic_rpt_config(base_config, user_input):
             "per_cycle": False
         })
 
-    # Example: add c-rate specials
     for crate in user_input.get("special_crates", []):
         rpt_targets.append({
             "key": f"{crate}C_Dch_Tmax",
@@ -63,6 +62,24 @@ def build_dynamic_rpt_config(base_config, user_input):
             "interest_variable": "duration",
             "per_cycle": False
         })
+
+        # check for normalizaion by first dcir
+        if user_input.get("normalize_by_first_dcir", False):
+            for dur in user_input.get("pulse_durations", []):
+                rpt_targets.append({
+                    "key": f"normalized_DCIR_{dur}s",
+                    "group_type": "discharge",
+                    "pulse": True,
+                    "interest_variable": f"internal_resistance_{dur}s",
+                    "per_cycle": False
+                })
+                rpt_targets.append({
+                    "key": f"normalized_DCIR_SOC_{dur}s",
+                    "group_type": "discharge",
+                    "pulse": True,
+                    "interest_variable": "soc",
+                    "per_cycle": False
+                })
     return updated_config
 
 
@@ -77,7 +94,26 @@ def build_dynamic_aging_config(base_config, user_input):
     if "Cycle Aging" not in updated_config["targets"]:
         updated_config["targets"]["Cycle Aging"] = []
 
-    # For demonstration, we leave it empty.
+    aging_targets = updated_config["targets"]["Cycle Aging"]
+
+    # check for normalization by nominal capacity
+    if user_input.get("normalize_by_nominal", False):
+        aging_targets.append({
+            "key": "normalized_capacity",
+            "group_type": "rest",
+            "interest_variable": "capacity",
+            "per_cycle": True
+        })
+
+    # check for normalization by first cycle capacity
+    if user_input.get("normalize_by_first_cycle", False):
+        aging_targets.append({
+            "key": "normalized_capacity",
+            "group_type": "rest",
+            "interest_variable": "capacity",
+            "per_cycle": True
+        })
+    
     return updated_config
 
 
@@ -114,8 +150,11 @@ def build_config_for_test_type(base_config, test_type, user_input):
         final_config = build_dynamic_rpt_config(base_config, user_input)
     elif test_type == "Cycle Aging":
         final_config = build_dynamic_aging_config(base_config, user_input)
-    elif test_type == "Calendar":
+    elif test_type == "Calendar Aging":
         final_config = build_dynamic_calendar_config(base_config, user_input)
+    elif test_type == "Combined RPT/Cycling":
+        temp_config = build_dynamic_rpt_config(base_config, user_input)
+        final_config = build_dynamic_aging_config(temp_config, user_input)
     else:
         # No dynamic changes - just use the base config
         final_config = base_config

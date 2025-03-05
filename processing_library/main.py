@@ -17,7 +17,9 @@ def main():
     path_to_data_csv    = "/Users/liammathers/Desktop/Github/BAP_Analytics/Testing/20240726_150811_Z61_EVE_C1_ZPg_D00_SN14524.csv"
     path_to_data_csv = "/Users/liammathers/Desktop/Github/BAP_Analytics/Testing/EV_SKE_556_019_RPT3_423_T25_15-07-2024_AllData.csv"
     path_to_data_csv = "/Users/liammathers/Desktop/Github/BAP_Analytics/Testing/harmonised_data.csv"
-
+    path_to_data_csv = "/Users/liammathers/Desktop/Github/BAP_Analytics/Testing/subset_first_100cycles.csv"
+    path_to_data_csv = "/Users/liammathers/Desktop/Github/bmw_lifetime_processing_int/local_test/events/input/upload/failed_to_process/Z61/20240701_110753_Z61_EVE_C1_Zykl_D01_SN14505.csv.csv"
+# 
     # Load the static dictionary
     with open(path_to_static_dict, "r") as f:
         base_config = json.load(f)
@@ -27,7 +29,7 @@ def main():
     # Define test parameters
     combined_input = {
         "test_type": "Rate Performance Test",
-        "cell_limits": {"capacity": 32.5},
+        "cell_limits": {"capacity": 11},
         "user_input": {
             "pulse_durations": [1, 2],
             "special_crates": [1, 2],
