@@ -12,7 +12,8 @@ from processing_library.data_processing import (
     psuedo_limit_extraction,
     add_cv_steps,
     create_merged_capacity,
-    normalize_capacity
+    normalize_capacity,
+    normalize_dcir
 )
 from processing_library.analysis_aggregator import find_parameters_for_section
 from processing_library.feature_extraction import (
@@ -40,6 +41,7 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
     # 2) Add CV steps
     df = add_cv_steps(df, vhigh=pseudo_high, vlow=pseudo_low)
     # Add SOC column
+    
     df = estimate_soc(df, nom_cap=capacity)
     # Keep track of original index
     df["original_index"] = df.index
@@ -69,7 +71,6 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
     dcir_normalization = user_input.get("dcir_normalization", None)
     nominal_normalization = user_input.get("nominal_normalization", False)
     first_cycle_normalization = user_input.get("first_cycle_normalization", False)
-
     group_data = []
 
     # 3) Build group_data for each group
@@ -131,7 +132,7 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
         if capacity and capacity > 0:
             if cccv_flag:
                 cc_df = gdf[gdf["Step Type"].isin(["charge", "discharge"])]
-                group_dict["crate"] = round(abs(cc_df["current"].mean()) / capacity, 3)
+                group_dict["crate"] = round(abs(cc_df["current"].mean()) / capacity, 2)
                 cv_idxs = gdf[gdf["Step Type"].isin(["charge cv", "discharge cv"])].index
                 if len(cv_idxs) > 0:
                     cv_start = cv_idxs[0]
@@ -168,7 +169,7 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
                         group_dict["cv_energy"] = cv_en
 
             else:
-                group_dict["crate"] = round(abs(gdf["current"].mean()) / capacity, 3)
+                group_dict["crate"] = round(abs(gdf["current"].mean()) / capacity, 2)
                 group_dict["ave_cc_u"] = gdf["voltage"].mean()
         else:
             group_dict["crate"] = 0.0
@@ -234,6 +235,7 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
     pulse_durations = user_input.get("pulse_durations", [10, 2, 0.1]) if user_input else [10]
     for gd in group_data:
         if gd["pulse"]:
+            gd['soc'] = round(gd['soc'] / 5) * 5
             s_i, e_i = gd["start_index"], gd["end_index"]
             sub_df = df.loc[s_i:e_i]
             v1 = sub_df["voltage"].iloc[0]
@@ -251,11 +253,13 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
                         gd[f"internal_resistance_{dur}s"] = mOhms
 
                         if dcir_normalization is not None :
-                            if not first_pulse and dur in dcir_normalization[0] and gd['soc'] == dcir_normalization[1]:
+                            print('dur', dur, 'soc', gd['soc'])
+                            print('dcir_normalization', dcir_normalization)
+                            if not first_pulse and dur == dcir_normalization[1] and gd['soc'] == dcir_normalization[0]:
+                                print('FOUND FIRST PULSE')
                                 first_dcir = mOhms
                                 first_pulse = True
-                            elif first_pulse:
-                                gd[f"normalized_DCIR_{dur}s"] = mOhms / first_dcir
+                        
                     else:
                         gd[f"internal_resistance_{dur}s"] = None
 
@@ -274,11 +278,12 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
 
     # 5 Assign cycles
     group_data, max_cyc = assign_cycle_keys(group_data, is_rpt)
-
     # 5.5 Normalize capacity 
     if test_type == "Cycle Aging" or test_type == "Combined RPT/Cycling":
-        group_data = normalize_capacity(group_data, nominal_normalization, first_cycle_normalization)
-        
+        group_data = normalize_capacity(group_data, nominal_normalization, first_cycle_normalization, capacity)
+    if first_pulse:
+        group_data = normalize_dcir(group_data, first_dcir, dcir_normalization)
+    
     # Summaries
     total_dur = 0
     if group_data:
@@ -311,7 +316,6 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
     # If test_type not in config targets, default to empty list
     targets_for_test = config.get("targets", {}).get(test_type, [])
 
-    print('calling find_parameters_for_section')
     
     final_df = find_parameters_for_section(group_data, targets_for_test, raw_data=df)
 
@@ -366,11 +370,9 @@ def process_lifetime_test(data: pd.DataFrame, combined_input: dict, config: dict
             else:
                 raise ValueError(f"Missing or unmatched column for {cname}")
 
-    # 4) Rename columns
+    # 4 Rename columns
     data = data.rename(columns=matched_columns)
 
-    if 'capacity' not in data.columns:
-        print(data.columns)
     data = create_merged_capacity(data)
 
     # 5) Pick temperature column if present

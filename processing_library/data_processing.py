@@ -14,6 +14,10 @@ def psuedo_limit_extraction(df: pd.DataFrame, zero_current_tolerance: float = 0.
 
     current_abs = df["current"].abs()
     current_value = df["current"].where(current_abs > zero_current_tolerance, 0)
+    # Set current to zero in the original dataframe where absolute value is below tolerance
+    df["current"] = current_value
+    # Plot filtered current vs time
+   
     vmax = df["voltage"].max()
     vmin = df["voltage"].min()
     df["Step Type"] = "rest"
@@ -126,7 +130,7 @@ def add_cv_steps(df: pd.DataFrame,
     for cv_group, group_data in df.groupby('cv_group'):
         if group_data['cv_flag'].iloc[0] == 1 and len(group_data) < 10:
             # Revert to original step type
-            # If we want to guess “charge” or “discharge”:
+            # If we want to guess "charge" or "discharge":
             original_type = 'discharge' if 'discharge cv' in group_data['Step Type'].unique()[0] else 'charge'
             df.loc[group_data.index, 'Step Type'] = original_type
     df.to_csv("ccvv.csv")
@@ -301,7 +305,7 @@ def create_merged_capacity(
             capacity_offset = raw_cap.iloc[-1]
 
         else:
-            # Check the previous group’s end conditions
+            # Check the previous group's end conditions
             prev_gid = group_ids[i - 1]
             prev_mask = (df["group_id"] == prev_gid)
 
@@ -330,10 +334,6 @@ def create_merged_capacity(
 
     return df
 
-from collections import Counter
-
-from collections import Counter
-
 def normalize_capacity(group_data, nominal_normalization, first_cycle_normalization, nominal_capacity):
     # Separate charge and discharge groups
     charge_groups = [entry for entry in group_data if entry['group_type'] == 'charge' and entry['crate'] != 0]
@@ -350,7 +350,10 @@ def normalize_capacity(group_data, nominal_normalization, first_cycle_normalizat
     first_charge_capacity = next((g['capacity'] for g in charge_groups if g['crate'] == most_common_charge_crate), None)
     first_discharge_capacity = next((g['capacity'] for g in discharge_groups if g['crate'] == most_common_discharge_crate), None)
 
+
     for g in group_data:
+        if g['group_type'] not in ['charge', 'discharge']:
+            continue
         # Label groups with the most common charge or discharge crate as "Cycle Aging"
         if g['group_type'] == 'charge':
             if g['crate'] == most_common_charge_crate:
@@ -375,3 +378,19 @@ def normalize_capacity(group_data, nominal_normalization, first_cycle_normalizat
                 g['firstC_normalized_capacity'] = g['capacity'] / first_discharge_capacity
 
     return group_data
+
+def normalize_dcir(group_data, first_pulse, dcir_normalization):
+    soc_limit = dcir_normalization[0]
+    time_limit = dcir_normalization[1]
+
+    for g in group_data:
+        if g['pulse'] and g.get('soc') == soc_limit:
+            key = f"internal_resistance_{time_limit}s"
+            ir_val = g.get(key)
+            if ir_val:
+                g[f"normalized_{key}"] = ir_val / first_pulse
+    return group_data
+
+
+
+

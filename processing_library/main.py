@@ -15,11 +15,11 @@ def main():
     # Paths to JSON static dictionary and CSV test data
     path_to_static_dict = "/Users/liammathers/Desktop/Github/BAP_Analytics/processing_library/Static_Dict.json"
     path_to_data_csv    = "/Users/liammathers/Desktop/Github/BAP_Analytics/Testing/20240726_150811_Z61_EVE_C1_ZPg_D00_SN14524.csv"
-    path_to_data_csv = "/Users/liammathers/Desktop/Github/BAP_Analytics/Testing/EV_SKE_556_019_RPT3_423_T25_15-07-2024_AllData.csv"
-    path_to_data_csv = "/Users/liammathers/Desktop/Github/BAP_Analytics/Testing/harmonised_data.csv"
-    path_to_data_csv = "/Users/liammathers/Desktop/Github/BAP_Analytics/Testing/subset_first_100cycles.csv"
-    path_to_data_csv = "/Users/liammathers/Desktop/Github/bmw_lifetime_processing_int/local_test/events/input/upload/failed_to_process/Z61/20240701_110753_Z61_EVE_C1_Zykl_D01_SN14505.csv.csv"
-# 
+    # path_to_data_csv = "/Users/liammathers/Desktop/Github/BAP_Analytics/Testing/EV_SKE_556_019_RPT3_423_T25_15-07-2024_AllData.csv"
+    # path_to_data_csv = "/Users/liammathers/Desktop/Github/BAP_Analytics/Testing/harmonised_data.csv"
+    # path_to_data_csv = "/Users/liammathers/Desktop/Github/BAP_Analytics/Testing/subset_first_100cycles.csv"
+    # path_to_data_csv = "/Users/liammathers/Desktop/Github/BAP_Analytics/Testing/20240610_155644_Z61_EVE_C1_Zykl_D01_SN13711.mf4.csv"
+    # path_to_data_csv = '/Users/liammathers/Desktop/Github/BAP_Analytics/Testing/IV_GO_R115C_005_LP18_549_T25_13-12-2024_AllData.csv'
     # Load the static dictionary
     with open(path_to_static_dict, "r") as f:
         base_config = json.load(f)
@@ -29,13 +29,24 @@ def main():
     # Define test parameters
     combined_input = {
         "test_type": "Rate Performance Test",
-        "cell_limits": {"capacity": 11},
+        "cell_limits": {"capacity": 32},
         "user_input": {
             "pulse_durations": [1, 2],
             "special_crates": [1, 2],
-            "voltage_relaxation": False
+            "voltage_relaxation": False,
+            "dcir_normalization": [50,1],
+            'pocv': False
         }
     }
+    # combined_input = {
+    #     "test_type": "Cycle Aging",
+    #     "cell_limits": {"capacity": 3.5},
+    #     "user_input": {
+    #         "nominal_normalization": True,
+    #         "first_cycle_normalization": True,
+    #     }
+    # }
+
 
     # Process the test data
     # 4) Call the processing function

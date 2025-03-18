@@ -9,12 +9,12 @@ def estimate_soc(
     voltage_col="voltage",
     step_col="Step Type",
     capacity_col="capacity",
+    charge_capacity_col="charge_capacity",
+    discharge_capacity_col="discharge_capacity",
     voltage_tolerance=0.1,
     update_nominal=False,
     nom_cap=None,
 ):
-    
-
     """
     Estimate the State of Charge (SoC) for a battery test dataset, recalibrating
     whenever a 'last charge' (full) or 'last discharge' (empty) event is detected.
@@ -27,32 +27,77 @@ def estimate_soc(
         df (pandas.DataFrame): The input DataFrame containing battery test data.
         voltage_col (str, optional): The column name for voltage. Defaults to 'voltage'.
         step_col (str, optional): The column name for step type. Defaults to 'Step Type'.
-        capacity_col (str, optional): The column name for capacity. Defaults to 'charge_capacity'.
-        voltage_tolerance (float, optional): The tolerance level for voltage comparison. Defaults to 0.005.
+        capacity_col (str, optional): The column name for capacity. Defaults to 'capacity'.
+        charge_capacity_col (str, optional): The column name for charge capacity. Defaults to 'charge_capacity'.
+        discharge_capacity_col (str, optional): The column name for discharge capacity. Defaults to 'discharge_capacity'.
+        voltage_tolerance (float, optional): The tolerance level for voltage comparison. Defaults to 0.1.
+        update_nominal (bool, optional): Whether to update the nominal capacity. Defaults to False.
+        nom_cap (float, optional): Nominal capacity value. Defaults to None.
 
     Returns a DataFrame with two new columns:
         'Accumulated Capacity' and 'Estimated SoC'.
     """
-    # 1. Create a capacity column by integrating the time and current columns
+    # Check if charge and discharge capacity columns exist
+    has_charge_cap = charge_capacity_col in df.columns
+    has_discharge_cap = discharge_capacity_col in df.columns
+    
+    # Create a backup manual calculation for capacity differences
     df['time_diff'] = df['time'].diff().fillna(0)  # Calculate time differences
     df['capacity_manual'] = (df['current'] * df['time_diff']).cumsum() / 3600  # Integrate current over time to get capacity in Ah
     
-    # 2. Compute capacity difference. We take abs() then multiply by sign below.
-    df["cap_diff"] = df['capacity_manual'].diff().abs().fillna(0)
+    # Create a unified capacity difference column based on charge and discharge capacity
+    if has_charge_cap and has_discharge_cap:
+        # Calculate differences in charge and discharge capacity
+        df['charge_cap_diff'] = df[charge_capacity_col].diff().fillna(0)
+        df['discharge_cap_diff'] = df[discharge_capacity_col].diff().fillna(0)
+        
+        # Handle capacity resets by detecting when absolute capacity decreases
+        # For charge capacity
+        charge_reset_mask = df[charge_capacity_col].abs() < df[charge_capacity_col].shift(1).abs()
+        df.loc[charge_reset_mask, 'charge_cap_diff'] = df.loc[charge_reset_mask, charge_capacity_col].abs()
+        
+        # For discharge capacity
+        discharge_reset_mask = df[discharge_capacity_col].abs() < df[discharge_capacity_col].shift(1).abs()
+        df.loc[discharge_reset_mask, 'discharge_cap_diff'] = df.loc[discharge_reset_mask, discharge_capacity_col].abs()
+        
+        # Create a unified capacity difference based on step type
+        df['unified_cap_diff'] = 0.0
+        
+        # For charge steps, use charge capacity difference
+        charge_mask = df[step_col].str.contains('charge', case=False, na=False)
+        df.loc[charge_mask, 'unified_cap_diff'] = df.loc[charge_mask, 'charge_cap_diff'].abs()
+        
+        # For discharge steps, use discharge capacity difference
+        discharge_mask = df[step_col].str.contains('discharge', case=False, na=False)
+        df.loc[discharge_mask, 'unified_cap_diff'] = df.loc[discharge_mask, 'discharge_cap_diff'].abs()
+        
+        # Use the unified capacity difference for cap_diff
+        df["cap_diff"] = df['unified_cap_diff']
+    else:
+        # Use the capacity column if charge/discharge capacity columns aren't available
+        # First check if capacity column exists
+        if capacity_col in df.columns:
+            # Calculate capacity difference
+            df['capacity_diff'] = df[capacity_col].diff().fillna(0)
+            
+            # Handle capacity resets by detecting when absolute capacity decreases
+            capacity_reset_mask = df[capacity_col].abs() < df[capacity_col].shift(1).abs()
+            df.loc[capacity_reset_mask, 'capacity_diff'] = df.loc[capacity_reset_mask, capacity_col].abs()
+            
+            # Use the capacity difference for cap_diff
+            df["cap_diff"] = df['capacity_diff'].abs()
+        else:
+            # Fallback to manual calculation from current integration
+            df["cap_diff"] = df['capacity_manual'].diff().abs().fillna(0)
 
-    
-
-    
-
-    # 3. Identify boundary voltages
+    # Identify boundary voltages
     min_voltage = df[voltage_col].min()
     max_voltage = df[voltage_col].max()
-    print(f'Min Voltage: {min_voltage}')
-    print(f'Max Voltage: {max_voltage}')
+   
     near_min = min_voltage + voltage_tolerance
     near_max = max_voltage - voltage_tolerance
 
-    # 4. Determine sign of each row: +1 if charge, -1 if discharge, 0 if rest/other
+    # Determine sign of each row: +1 if charge, -1 if discharge, 0 if rest/other
     step_type = df[step_col].astype(str).str.lower().fillna("")
     sign = np.where(
         step_type.str.contains("discharge"),
@@ -61,10 +106,9 @@ def estimate_soc(
     )
     df["Sign"] = sign
 
-    # 5. Find "last charge" and "last discharge" events:
-    #       last charge -> next step is rest, and voltage >= near_max
-    #       last discharge -> next step is rest, and voltage <= near_min
-    #    We'll treat these as "recalibration points."
+    # Find "last charge" and "last discharge" events:
+    #    last charge -> next step is rest, and voltage >= near_max
+    #    last discharge -> next step is rest, and voltage <= near_min
     next_step_type = pd.Series(np.roll(step_type.values, -1), index=df.index)
     # Prevent potential edge confusion in the very last row:
     next_step_type.iloc[-1] = next_step_type.iloc[-1]
@@ -86,7 +130,7 @@ def estimate_soc(
     accumulated_capacity = np.zeros(len(df))
     estimated_soc = np.full(len(df), np.nan)
 
-    # 7. Combine the two event types into a single list, labeled, and sort by index
+    # Combine the two event types into a single list, labeled, and sort by index
     events = []
     for idx in charge_indices:
         events.append((idx, "charge"))
@@ -95,9 +139,7 @@ def estimate_soc(
     events.sort(key=lambda x: x[0])  # sort by the row index ascending
 
     # If no events, do a single pass cumsum with a single nominal.
-    
     if len(events) == 0:
-        print("Warning: No full-charge or full-discharge event detected.")
         # We'll just pick the largest capacity in the entire dataset as nominal:
         if update_nominal == False:
             nominal_capacity = nom_cap
@@ -111,16 +153,21 @@ def estimate_soc(
         accumulated_capacity = np.clip(accumulated_capacity, 0, None)
         estimated_soc = np.clip(estimated_soc, 0, 100)
         df["Accumulated Capacity"] = accumulated_capacity
-        df["Estimated SoC"] = estimated_soc
+        df["soc"] = estimated_soc
+        
+        
+
         return df
 
-    # 8. We'll keep track of a "current" nominal capacity that can be updated
-    #    at each full-charge event.
-    #    Start with a nominal capacity guess (e.g., maximum in the entire dataset).
-    if update_nominal:
+    # We'll keep track of a "current" nominal capacity that can be updated
+    # at each full-charge event.
+    # Start with a nominal capacity guess (e.g., maximum in the entire dataset).
+    if not update_nominal:
         nominal_capacity = nom_cap
+        print(f"Using nominal capacity: {nominal_capacity}")
     else:
         nominal_capacity = df[capacity_col].max()
+        print(f"Using maximum capacity: {nominal_capacity}")
 
     # Signed capacity changes for all rows
     raw_cap_diff = sign * df["cap_diff"].values
@@ -129,125 +176,174 @@ def estimate_soc(
     start_idx = 0  # Start of the current segment
     current_baseline = 0.0  # Accumulated capacity at the last event
 
-    # 8a. First partial segment: from row 0 up to (but not including) the first event
+    # First partial segment: from row 0 up to (but not including) the first event
     first_event_idx = events[0][0]
     if first_event_idx > 0:
         # cumsum in [0, first_event_idx)
         segment_diffs = raw_cap_diff[start_idx:first_event_idx]
-        accumulated_capacity[start_idx:first_event_idx] = current_baseline + np.cumsum(
-            segment_diffs
-        )
+        
+        # Calculate accumulated capacity for this segment
+        segment_accumulated = current_baseline + np.cumsum(segment_diffs)
+        
+        # Check if we have negative values in this segment
+        min_value = np.min(segment_accumulated)
+        if min_value < 0:
+            # Shift the entire segment up so the minimum value becomes zero
+            shift_amount = abs(min_value)
+            print(f"Shifting first segment [0:{first_event_idx}] up by {shift_amount} to avoid negative values")
+            segment_accumulated += shift_amount
+        
+        # Assign the shifted values back to accumulated_capacity
+        accumulated_capacity[start_idx:first_event_idx] = segment_accumulated
+        print(f"Set accumulated capacity for first segment [0:{first_event_idx}], min value: {np.min(segment_accumulated)}, values: {segment_accumulated[::100]}")
+        
         estimated_soc[start_idx:first_event_idx] = (
             accumulated_capacity[start_idx:first_event_idx] / nominal_capacity
         ) * 100
-        # Clip
-        accumulated_capacity[start_idx:first_event_idx] = np.clip(
-            accumulated_capacity[start_idx:first_event_idx], 0, None
-        )
+        
+        # No need for clipping since we've already ensured no negative values
         estimated_soc[start_idx:first_event_idx] = np.clip(
             estimated_soc[start_idx:first_event_idx], 0, 100
         )
 
-    # 9. Process each event in chronological order
+    # Process each event in chronological order
     for i, (evt_idx, evt_type) in enumerate(events):
         # Fill cumsum from the previous event to this event index (exclusive)
         if i > 0:
             prev_event_idx = events[i - 1][0]
             segment_diffs = raw_cap_diff[prev_event_idx:evt_idx]
             
-
-            accumulated_capacity[prev_event_idx:evt_idx] = current_baseline + np.cumsum(segment_diffs)
-
-
+            # Calculate accumulated capacity for this segment
+            segment_accumulated = current_baseline + np.cumsum(segment_diffs)
+            
+            # Check if we have negative values in this segment
+            min_value = np.min(segment_accumulated)
+            if min_value < 0:
+                # Shift the entire segment up so the minimum value becomes zero
+                shift_amount = abs(min_value)
+                print(f"Shifting segment [{prev_event_idx}:{evt_idx}] up by {shift_amount} to avoid negative values")
+                segment_accumulated += shift_amount
+            
+            # Assign the shifted values back to accumulated_capacity
+            accumulated_capacity[prev_event_idx:evt_idx] = segment_accumulated
+            print(f"Set accumulated capacity for segment [{prev_event_idx}:{evt_idx}], baseline: {current_baseline}, min value: {np.min(segment_accumulated)}, values: {segment_accumulated[::100]}")
+            
             estimated_soc[prev_event_idx:evt_idx] = (
                 accumulated_capacity[prev_event_idx:evt_idx] / nominal_capacity
             ) * 100
-            # Clip
-            accumulated_capacity[prev_event_idx:evt_idx] = np.clip(
-                accumulated_capacity[prev_event_idx:evt_idx], 0, None
-            )
-    
+            
+            # No need for clipping since we've already ensured no negative values
             estimated_soc[prev_event_idx:evt_idx] = np.clip(
                 estimated_soc[prev_event_idx:evt_idx], 0, 100
             )
 
         # Now handle the actual event row "evt_idx"
         if evt_type == "charge":
-           
+            # For full charge events, set SOC to 100%
+            estimated_soc[evt_idx] = 100.0
+            
             if update_nominal:
                 new_nominal = df.loc[evt_idx:, capacity_col].max()
                 nominal_capacity = new_nominal
-
-                # Full charge: set capacity to max
-                full_val = df.loc[evt_idx:, capacity_col].max()
-                accumulated_capacity[evt_idx] = full_val
-
-            estimated_soc[evt_idx] = 100.0
-            current_baseline = accumulated_capacity[evt_idx-1]  # This should hold the max value
-
+                
+                # Only update accumulated capacity if update_nominal is true
+                accumulated_capacity[evt_idx] = nominal_capacity
+                # Update the baseline for the next segment
+            
+            nominal_capacity = accumulated_capacity[evt_idx-1]
+            current_baseline = accumulated_capacity[evt_idx-1]
+            print(f"Current baseline: {current_baseline}")
 
         elif evt_type == "discharge":
-       
-            accumulated_capacity[evt_idx] = 0.0
+            # For full discharge events, set SOC to 0%
             estimated_soc[evt_idx] = 0.0
+            
+            
+            accumulated_capacity[evt_idx] = 0.0
             current_baseline = 0.0  # Reset baseline for the next cycle
-
-    
-
 
         # Move the segment start index to this event
         start_idx = evt_idx
 
-    # 10. After the last event, fill the cumsum to the end of the dataset
+    # After the last event, fill the cumsum to the end of the dataset
     last_event_idx = events[-1][0]
     if last_event_idx < len(df) - 1:
         segment_diffs = raw_cap_diff[last_event_idx:]
-        # The baseline at the last event is "current_baseline"
-        # so we do baseline + cumsum of diffs
-        accumulated_capacity[last_event_idx:] = current_baseline + np.cumsum(
-            segment_diffs
-        )
+        
+        # Calculate accumulated capacity for this segment
+        segment_accumulated = current_baseline + np.cumsum(segment_diffs)
+        
+        # Check if we have negative values in this segment
+        min_value = np.min(segment_accumulated)
+        if min_value < 0:
+            # Shift the entire segment up so the minimum value becomes zero
+            shift_amount = abs(min_value)
+            print(f"Shifting final segment [{last_event_idx}:end] up by {shift_amount} to avoid negative values")
+            segment_accumulated += shift_amount
+        
+        # Assign the shifted values back to accumulated_capacity
+        accumulated_capacity[last_event_idx:] = segment_accumulated
+        print(f"Set accumulated capacity for final segment [{last_event_idx}:end], min value: {np.min(segment_accumulated)}, values: {segment_accumulated[::100]}")
+        
         estimated_soc[last_event_idx:] = (
             accumulated_capacity[last_event_idx:] / nominal_capacity
         ) * 100
 
-    # 11. Final clip
-    accumulated_capacity = np.clip(accumulated_capacity, 0, None)
+    # Final check for any remaining negative values (should not happen with our shifting approach)
+    min_accumulated = np.min(accumulated_capacity)
+    if min_accumulated < 0:
+        print(f"Warning: Negative values still found in accumulated capacity: {min_accumulated}")
+        accumulated_capacity = np.clip(accumulated_capacity, 0, None)
+        print(f"Applied final clipping to ensure no negative values")
+    
+    print(f"Final accumulated capacity range: [{np.min(accumulated_capacity)}, {np.max(accumulated_capacity)}]")
+    
+    # Ensure SOC is within 0-100%
     estimated_soc = np.clip(estimated_soc, 0, 100)
+    print(f"Final SOC range: [{np.min(estimated_soc)}, {np.max(estimated_soc)}]")
 
-    # 12. Store in DataFrame
+    # Store in DataFrame
     df["Accumulated Capacity"] = accumulated_capacity
     df["soc"] = estimated_soc
+    df.to_csv('soc-analysis-V2.csv', index=False)
+    import plotly.graph_objs as go
+    from plotly.subplots import make_subplots
 
-    # Plot Accumulated Capacity
-    
-    fig, ax1 = plt.subplots(figsize=(12, 6))
+    # Create subplot layout (2 rows, 1 column)
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                        subplot_titles=("Battery Capacity", "State of Charge (SOC)"))
 
-    ax1.set_xlabel("Time (s)")
-    ax1.set_ylabel("Accumulated Capacity (Ah)", color='tab:blue')
-    ax1.plot(df["time"], df["Accumulated Capacity"], label="Accumulated Capacity", color='tab:blue')
-    ax1.axhline(0, color='r', linestyle='--', label='Zero Line')
-    ax1.tick_params(axis='y', labelcolor='tab:blue')
+    # Plot Capacity and Accumulated Capacity
+    fig.add_trace(go.Scatter(
+        x=df.index, y=df[capacity_col], mode='lines', name='Capacity', opacity=0.7),
+        row=1, col=1)
 
-    ax2 = ax1.twinx()
-    ax2.set_ylabel("Capacity (Ah)", color='tab:green')
-    ax2.plot(df["time"], df['charge_capacity'], label="Capacity", color='tab:green')
-    ax2.tick_params(axis='y', labelcolor='tab:green')
+    fig.add_trace(go.Scatter(
+        x=df.index, y=df['Accumulated Capacity'], mode='lines', name='Accumulated Capacity', opacity=0.7),
+        row=1, col=1)
 
-    fig.tight_layout()
-    plt.title("Accumulated Capacity and Capacity vs. Time")
-    fig.legend(loc="upper right", bbox_to_anchor=(1,1), bbox_transform=ax1.transAxes)
+    # Plot SOC
+    fig.add_trace(go.Scatter(
+        x=df.index, y=df['soc'], mode='lines', name='SOC', line=dict(color='green'), opacity=0.7),
+        row=2, col=1)
 
+    # Update layout
+    fig.update_layout(
+        height=700,
+        width=1000,
+        title_text='Battery Capacity and State of Charge Analysis',
+        showlegend=True
+    )
 
-   
+    fig.update_yaxes(title_text='Capacity (Ah)', row=1, col=1)
+    fig.update_yaxes(title_text='State of Charge (%)', row=2, col=1)
+    fig.update_xaxes(title_text='Index', row=2, col=1)
 
- 
-    plt.show()
-    
-    df.to_csv("estimated_soc.csv", index=False)
+    # Save as HTML
+    fig.write_html("cycle2_battery_analysis_plot.html")
 
-
-
+    # Optional: display in Jupyter Notebook
+    # fig.show()
     return df
 
 

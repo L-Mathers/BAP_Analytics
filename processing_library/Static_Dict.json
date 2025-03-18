@@ -1,19 +1,13 @@
 {
     "targets": {
         "Rate Performance Test": [
-        {
-           "key": "pOCV_voltage",
-        "range_c_rate": [0.03,0.15],      
-        "group_type": "discharge",
-        "time_series": true,
-        "interest_variable": "voltage"
-        },
+       
         {
             "key": "standard_dch_capacity",
             "group_type": "discharge",
             "pulse": false,
             "full_cycle": true,
-            "range_c_rate": [0.25, 0.5],
+            "crate": [0.25, 0.5],
             "interest_variable": "capacity",
             "per_cycle": false
             }

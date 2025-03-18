@@ -3,7 +3,7 @@
 import numpy as np
 import pandas as pd
 
-def find_parameters_for_section(groups, targets, c_rate_tolerance=0.2, raw_data=None):
+def find_parameters_for_section(groups, targets, c_rate_tolerance=0.5, raw_data=None):
     """
     Produces a final DataFrame in three vertical 'blocks':
       1) Single-value rows at the top
@@ -23,8 +23,10 @@ def find_parameters_for_section(groups, targets, c_rate_tolerance=0.2, raw_data=
     for t in targets:
         if t.get('per_cycle', False):
             per_cycle_targets.append(t)
+            
         elif t.get('time_series', False):
             time_series_targets.append(t)
+            
         else:
             single_value_targets.append(t)
 
@@ -94,31 +96,37 @@ def _build_single_value_df(groups, targets, c_rate_tol):
 
     for tgt in targets:
         tkey = tgt["key"]
+        
         ivar = tgt.get("interest_variable")
         ignore_keys = {'key','interest_variable','per_cycle','aggregation','time_series'}
         crit_keys  = set(tgt.keys()) - ignore_keys
-
+        i = 0
         matches_for_this_target = []
         for grp in groups:
+            i += 1
             match = True
             for c in crit_keys:
                 tval = tgt[c]
-                gval = grp.get(c, None)  # direct dictionary key
-                if c == 'c_rate':
-                    if gval is None or abs(gval - tval) > c_rate_tol:
-                        match = False
-                        break
-                elif c == 'range_c_rate':
-                    lo, hi = tval
-                    if gval is None or not (lo <= gval <= hi):
-                        match = False
-                        break
+                gval = grp.get(c, 0)  # direct dictionary key
+                if c == 'crate':
+                    if len(tval) == 1:
+                        if abs(gval - tval[0]) > c_rate_tol:
+                            match = False
+                            break
+                    else:
+                        lo, hi = tval
+                        if gval is None or not (lo <= gval <= hi):
+                            match = False
+                            break
                 else:
                     if gval != tval:
+                         
                         match = False
                         break
             if match:
                 val = grp.get(ivar, np.nan)
+       
+                # print('target match',tgt)
                 matches_for_this_target.append(val)
 
         col_data[tkey].extend(matches_for_this_target)
@@ -147,7 +155,6 @@ def _build_per_cycle_df(groups, targets, c_rate_tol):
         return pd.DataFrame()
 
     df_pc = pd.DataFrame(np.nan, index=range(len(cycles)), columns=all_keys)
-    df_pc.insert(0, "cycle", cycles)
     cycle_to_index = {cyc: i for i, cyc in enumerate(cycles)}
 
     for tgt in targets:
@@ -183,18 +190,9 @@ def _build_per_cycle_df(groups, targets, c_rate_tol):
             if match and ivar in grp:
                 val = grp[ivar]
                 row_idx = cycle_to_index[cyc]
-                if pd.notna(df_pc.at[row_idx, tkey]):
-                    existing_val = df_pc.at[row_idx, tkey]
-                    if agg == 'min':
-                        val = min(existing_val, val)
-                    elif agg == 'max':
-                        val = max(existing_val, val)
-                    elif agg == 'sum':
-                        val += existing_val
-                    elif agg == 'average':
-                        val = (existing_val + val) / 2
                 df_pc.at[row_idx, tkey] = val
-
+   
+    df_pc = df_pc.drop(df_pc.index[0])
     return df_pc
 
 
@@ -222,15 +220,16 @@ def _build_time_series_df(groups, targets, c_rate_tol, raw_data):
             for c in crit_keys:
                 tval = tgt[c]
                 gval = grp.get(c, None)
-                if c == 'c_rate':
-                    if gval is None or abs(gval - tval) > c_rate_tol:
-                        match=False
-                        break
-                elif c=='range_c_rate':
-                    lo, hi= tval
-                    if gval is None or not(lo<= gval<= hi):
-                        match=False
-                        break
+                if c == 'crate':
+                    if len(tval) == 1:
+                        if abs(gval - tval) > c_rate_tol:
+                            match = False
+                            break
+                    else:
+                        lo, hi = tval
+                        if gval is None or not (lo <= gval <= hi):
+                            match = False
+                            break
                 else:
                     if gval!= tval:
                         match=False

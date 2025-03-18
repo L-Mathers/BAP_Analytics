@@ -1,1 +1,4 @@
 *.csv
+*.html
+*.DS_Store
+*.pyc
