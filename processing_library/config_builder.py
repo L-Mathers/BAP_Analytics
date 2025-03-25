@@ -31,7 +31,7 @@ def build_dynamic_rpt_config(base_config, user_input):
         )
         rpt_targets.append(
             {
-                "key": f"DCIR_SOC_{dur}s",
+                "key": f"SOC",
                 "group_type": "discharge",
                 "pulse": True,
                 "interest_variable": "soc",
@@ -109,6 +109,7 @@ def build_dynamic_rpt_config(base_config, user_input):
                 "key": "pocv_voltage",
                 "group_type": "discharge",
                 "interest_variable": "voltage",
+                "crate": [0.01, 0.1],
                 "per_cycle": False,
                 "time_series": True,
             }
@@ -118,6 +119,7 @@ def build_dynamic_rpt_config(base_config, user_input):
                 "key": "pocv_soc",
                 "group_type": "discharge",
                 "interest_variable": "soc",
+                "crate": [0.01, 0.1],
                 "per_cycle": False,
                 "time_series": True,
             }
@@ -127,6 +129,7 @@ def build_dynamic_rpt_config(base_config, user_input):
                 "key": "pocv_time",
                 "group_type": "discharge",
                 "interest_variable": "time",
+                "crate": [0.01, 0.1],
                 "per_cycle": False,
                 "time_series": True,
             }

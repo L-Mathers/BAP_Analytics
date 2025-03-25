@@ -368,7 +368,7 @@ def assign_cycle_keys(data, is_rpt):
         if entry["group_type"] == "charge":
             last_charge = entry
         elif entry["group_type"] == "discharge" and last_charge:
-            if not is_rpt or entry.get("full_cycle", False):
+            if not is_rpt:
                 cycle_number += 1
                 last_charge["cycle"] = cycle_number
                 entry["cycle"] = cycle_number

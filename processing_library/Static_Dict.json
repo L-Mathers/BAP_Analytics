@@ -1,7 +1,7 @@
 {
     "targets": {
         "Rate Performance Test": [
-       
+
         {
             "key": "standard_dch_capacity",
             "group_type": "discharge",
@@ -9,8 +9,19 @@
             "full_cycle": true,
             "crate": [0.25, 0.5],
             "interest_variable": "capacity",
+            "occurrence": "first",
             "per_cycle": false
-            }
+            },
+        {
+            "key": "cycle",
+            "group_type": "discharge",
+            "full_cycle": true,
+            "interest_variable": "cycle",
+            "crate": [0.25, 0.5],
+            "pulse": false,
+            "occurrence": "first",
+            "per_cycle": false
+        }
         ],
         "Cycle Aging": [
             {
@@ -87,7 +98,7 @@
                 "interest_variable": "energy",
                 "per_cycle": true
             },
-            
+
             {
                 "key": "average_voltage_ch_cc",
                 "group_type": "charge",
@@ -105,14 +116,14 @@
                 "group_type": "discharge",
                 "interest_variable": "u_min",
                 "per_cycle": true
-                
+
             },
             {
                 "key": "U_max",
                 "group_type": "charge",
                 "interest_variable": "u_max",
                 "per_cycle": true
-              
+
 
             },
             {
@@ -151,7 +162,7 @@
                 "interest_variable": "i_min",
                 "per_cycle": true
             },
-            
+
             {
                 "key": "coulombic_efficiency",
                 "group_type": "charge",
@@ -180,15 +191,12 @@
             "interest_variable": "cycle",
             "per_cycle": true
             }
-           
-        
 
-        
+
+
+
 
 
         ]
     }
 }
-
-
-
