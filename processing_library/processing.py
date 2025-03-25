@@ -1,28 +1,27 @@
 # processing.py
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 
 # Fuzzy matching (if not already in a dedicated data_processing function)
-from fuzzywuzzy import process, fuzz
+from fuzzywuzzy import fuzz, process
+
+from processing_library.analysis_aggregator import find_parameters_for_section
 
 # Import from your refactored modules
 from processing_library.config_builder import build_config_for_test_type
-from processing_library.data_processing import (
-    psuedo_limit_extraction,
-    add_cv_steps,
-    create_merged_capacity,
-    normalize_capacity,
-    normalize_dcir
-)
-from processing_library.analysis_aggregator import find_parameters_for_section
 from processing_library.feature_extraction import (
+    add_cv_steps,
     assign_cycle_keys,
     calculate_coulombic_and_energy_eff,
+    create_merged_capacity,
     estimate_soc,
-    
-
+    normalize_capacity,
+    normalize_dcir,
+    psuedo_limit_extraction,
+    seperate_test_types,
 )
+
 
 def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
     """
@@ -41,7 +40,7 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
     # 2) Add CV steps
     df = add_cv_steps(df, vhigh=pseudo_high, vlow=pseudo_low)
     # Add SOC column
-    
+
     df = estimate_soc(df, nom_cap=capacity)
     # Keep track of original index
     df["original_index"] = df.index
@@ -62,7 +61,6 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
     first_dch_flag = False
     first_pulse = False
     first_dcir = 0.0
-    
 
     # Some voltage thresholds used to determine "full cycle"
     high_thr = pseudo_high * 0.95
@@ -92,7 +90,7 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
             "end_voltage": gdf["voltage"].iloc[-1],
             "capacity": None,
             "energy": None,
-            "pulse": (dur < 40),  
+            "pulse": (dur < 40 and dur > 5),
             "full_cycle": False,
             "cc_capacity": None,
             "cv_capacity": None,
@@ -109,7 +107,7 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
             "coulombic_efficiency": None,
             "energy_efficiency": None,
             "crate": 0,
-            "soc": gdf['soc'].iloc[0],
+            "soc": round(gdf["soc"].iloc[0]),
             "group_type": None,
             "ch_energy_throughput": None,
             "dch_energy_throughput": None,
@@ -148,8 +146,13 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
 
                         cc_cap = abs(gdf.loc[cv_start, "charge_capacity"] - init_ch_cap)
                         cc_en = abs(gdf.loc[cv_start, "charge_energy"] - init_ch_en)
-                        cv_cap = abs(gdf.loc[cv_end, "charge_capacity"] - gdf.loc[cv_start, "charge_capacity"])
-                        cv_en = abs(gdf.loc[cv_end, "charge_energy"] - gdf.loc[cv_start, "charge_energy"])
+                        cv_cap = abs(
+                            gdf.loc[cv_end, "charge_capacity"]
+                            - gdf.loc[cv_start, "charge_capacity"]
+                        )
+                        cv_en = abs(
+                            gdf.loc[cv_end, "charge_energy"] - gdf.loc[cv_start, "charge_energy"]
+                        )
                         group_dict["cc_capacity"] = cc_cap
                         group_dict["cv_capacity"] = cv_cap
                         group_dict["cc_energy"] = cc_en
@@ -161,8 +164,14 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
 
                         cc_cap = abs(gdf.loc[cv_start, "discharge_capacity"] - init_dch_cap)
                         cc_en = abs(gdf.loc[cv_start, "discharge_energy"] - init_dch_en)
-                        cv_cap = abs(gdf.loc[cv_end, "discharge_capacity"] - gdf.loc[cv_start, "discharge_capacity"])
-                        cv_en = abs(gdf.loc[cv_end, "discharge_energy"] - gdf.loc[cv_start, "discharge_energy"])
+                        cv_cap = abs(
+                            gdf.loc[cv_end, "discharge_capacity"]
+                            - gdf.loc[cv_start, "discharge_capacity"]
+                        )
+                        cv_en = abs(
+                            gdf.loc[cv_end, "discharge_energy"]
+                            - gdf.loc[cv_start, "discharge_energy"]
+                        )
                         group_dict["cc_capacity"] = cc_cap
                         group_dict["cv_capacity"] = cv_cap
                         group_dict["cc_energy"] = cc_en
@@ -181,7 +190,9 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
 
         if is_charge:
             group_dict["group_type"] = "charge"
-            full_c = (group_dict["start_voltage"] <= low_thr) and (group_dict["end_voltage"] >= high_thr)
+            full_c = (group_dict["start_voltage"] <= low_thr) and (
+                group_dict["end_voltage"] >= high_thr
+            )
             group_dict["full_cycle"] = full_c
 
             # If no CV portion found
@@ -198,7 +209,9 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
 
         elif is_discharge:
             group_dict["group_type"] = "discharge"
-            full_c = (group_dict["start_voltage"] >= high_thr) and (group_dict["end_voltage"] <= low_thr)
+            full_c = (group_dict["start_voltage"] >= high_thr) and (
+                group_dict["end_voltage"] <= low_thr
+            )
             group_dict["full_cycle"] = full_c
 
             if group_dict["cc_capacity"] is None:
@@ -235,7 +248,7 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
     pulse_durations = user_input.get("pulse_durations", [10, 2, 0.1]) if user_input else [10]
     for gd in group_data:
         if gd["pulse"]:
-            gd['soc'] = round(gd['soc'] / 5) * 5
+
             s_i, e_i = gd["start_index"], gd["end_index"]
             sub_df = df.loc[s_i:e_i]
             v1 = sub_df["voltage"].iloc[0]
@@ -252,14 +265,16 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
                         mOhms = ohms * 1000
                         gd[f"internal_resistance_{dur}s"] = mOhms
 
-                        if dcir_normalization is not None :
-                            print('dur', dur, 'soc', gd['soc'])
-                            print('dcir_normalization', dcir_normalization)
-                            if not first_pulse and dur == dcir_normalization[1] and gd['soc'] == dcir_normalization[0]:
-                                print('FOUND FIRST PULSE')
+                        if dcir_normalization is not None:
+
+                            if (
+                                not first_pulse
+                                and dur == dcir_normalization[1]
+                                and gd["soc"] == dcir_normalization[0]
+                            ):
                                 first_dcir = mOhms
                                 first_pulse = True
-                        
+
                     else:
                         gd[f"internal_resistance_{dur}s"] = None
 
@@ -276,50 +291,37 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
                     gd["relaxation_start"] = s_i2
                     gd["relaxation_end"] = e_i2
 
-    # 5 Assign cycles
-    group_data, max_cyc = assign_cycle_keys(group_data, is_rpt)
-    # 5.5 Normalize capacity 
-    if test_type == "Cycle Aging" or test_type == "Combined RPT/Cycling":
-        group_data = normalize_capacity(group_data, nominal_normalization, first_cycle_normalization, capacity)
-    if first_pulse:
+    # If dcir_normalization is specified, normalize the values after all groups are processed
+    if dcir_normalization and first_pulse and first_dcir > 0:
         group_data = normalize_dcir(group_data, first_dcir, dcir_normalization)
-    
-    # Summaries
-    total_dur = 0
-    if group_data:
-        last_end = group_data[-1]["end_index"]
-        total_dur = df.loc[last_end, "time"] / 86400.0
 
-    total_en_thru = (ch_en_thru + dch_en_thru) / 1000
-    total_cap_thru = (ch_cap_thru + dch_cap_thru) / 1000
-    eq_cycle = (dch_cap_thru / capacity) if capacity else None
+    # Assign cycle keys
+    group_data, _ = assign_cycle_keys(group_data, is_rpt)
 
-    summary = {
-        "group_number": len(group_data) + 2,
-        "group_type": "summary",
-        "max_cycles": max_cyc,
-        "total_duration": total_dur,
-        "ch_energy_throughput": ch_en_thru / 1000,
-        "dch_energy_throughput": dch_en_thru / 1000,
-        "total_energy_throughput": total_en_thru,
-        "ch_capacity_throughput": ch_cap_thru / 1000,
-        "dch_capacity_throughput": dch_cap_thru / 1000,
-        "total_capacity_throughput": total_cap_thru,
-        "eq_cycle": eq_cycle,
-    }
-    group_data.append(summary)
-   
-    
+    # Calculate coulombic and energy efficiency
     group_data = calculate_coulombic_and_energy_eff(group_data)
 
-    # 6) Build final DataFrame from config targets
-    # If test_type not in config targets, default to empty list
-    targets_for_test = config.get("targets", {}).get(test_type, [])
+    # Classify groups as cycling or rpt
+    group_data = seperate_test_types(group_data)
 
-    
-    final_df = find_parameters_for_section(group_data, targets_for_test, raw_data=df)
+    # Normalize capacity if requested
+    if user_input.get("nominal_normalization", False) or user_input.get(
+        "first_cycle_normalization", False
+    ):
+        group_data = normalize_capacity(
+            group_data,
+            user_input.get("nominal_normalization", False),
+            user_input.get("first_cycle_normalization", False),
+            capacity,
+        )
 
-    return final_df
+    # Extract final metrics using the targets from the config
+    section_targets = config["targets"].get(test_type, [])
+    df_metrics = find_parameters_for_section(
+        group_data, section_targets, c_rate_tolerance=0.5, raw_data=df
+    )
+
+    return df_metrics
 
 
 def process_lifetime_test(data: pd.DataFrame, combined_input: dict, config: dict):
@@ -335,18 +337,23 @@ def process_lifetime_test(data: pd.DataFrame, combined_input: dict, config: dict
 
     # 2) Merge static + dynamic config
     final_config = build_config_for_test_type(config, test_type, user_input)
-    is_rpt = (test_type == "Rate Performance Test" or test_type == "Combined RPT/Cycling")
+    is_rpt = test_type == "Rate Performance Test" or test_type == "Combined RPT/Cycling"
 
     # 3) Fuzzy-match required columns
     required_cols = {
-        "time": ["time","elapsed time","test time","time (s)"],
-        "current": ["current","current (a)", 'I[A]'],
-        "voltage": ["voltage","voltage (v)", 'U[V]'],
-        "capacity": ["capacity","capacity (ah)","capacity (mah)"],
-        "discharge_capacity": ["discharge capacity (ah)","dcap","discharge_capacity", "Ah-Dis-Set" ],
-        "charge_capacity": ["charge capacity (ah)","ccap","charge_capacity", 'Ah-Ch-Set'],
-        "discharge_energy": ["discharge energy (wh)","denergy","discharge_energy",'Line' ],
-        "charge_energy": ["charge energy (wh)","cenergy","charge_energy", 'State']
+        "time": ["time", "elapsed time", "test time", "time (s)"],
+        "current": ["current", "current (a)", "I[A]"],
+        "voltage": ["voltage", "voltage (v)", "U[V]"],
+        "capacity": ["capacity", "capacity (ah)", "capacity (mah)"],
+        "discharge_capacity": [
+            "discharge capacity (ah)",
+            "dcap",
+            "discharge_capacity",
+            "Ah-Dis-Set",
+        ],
+        "charge_capacity": ["charge capacity (ah)", "ccap", "charge_capacity", "Ah-Ch-Set"],
+        "discharge_energy": ["discharge energy (wh)", "denergy", "discharge_energy", "Line"],
+        "charge_energy": ["charge energy (wh)", "cenergy", "charge_energy", "State"],
     }
 
     matched_columns = {}
@@ -362,11 +369,10 @@ def process_lifetime_test(data: pd.DataFrame, combined_input: dict, config: dict
                     best_match = col_name
         if best_match and best_score >= 80:
             matched_columns[best_match] = cname
-            print(f"Matched {best_match} to {cname}")
         else:
-            if cname == 'capacity':
+            if cname == "capacity":
                 continue
-                
+
             else:
                 raise ValueError(f"Missing or unmatched column for {cname}")
 
@@ -376,10 +382,16 @@ def process_lifetime_test(data: pd.DataFrame, combined_input: dict, config: dict
     data = create_merged_capacity(data)
 
     # 5) Pick temperature column if present
-    temp_cols = [c for c in data.columns if "temp" in c.lower() or "aux" in c.lower() or 't1' in c.lower()]
+    temp_cols = [
+        c for c in data.columns if "temp" in c.lower() or "aux" in c.lower() or "t1" in c.lower()
+    ]
     if temp_cols:
         picked = max(temp_cols, key=lambda x: data[x].max())
         data["temperature"] = data[picked]
+
+    # check if time is in seconds
+    if data["time"].max() < 1000:
+        data["time"] = data["time"] * 3600
 
     # 6) Run the core extraction logic
     result_df = data_extractor(
@@ -388,10 +400,8 @@ def process_lifetime_test(data: pd.DataFrame, combined_input: dict, config: dict
         config=final_config,
         test_type=test_type,
         is_rpt=is_rpt,
-        user_input=user_input
+        user_input=user_input,
     )
-
-    
 
     # 7) Remove columns that are entirely NaN
     result_df = result_df.dropna(axis=1, how="all")
