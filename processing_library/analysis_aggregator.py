@@ -158,106 +158,80 @@ def _get_criteria_dict(target):
 
 def _build_single_value_df(groups, targets, c_rate_tol):
     """
-    Builds a wide DataFrame where each single-value target key is its own column.
-    Values from different groups are kept in separate rows, but values from the
-    same group are placed in the same row.
+    Builds a DataFrame with a single value per target key.
     """
     if not targets:
         return pd.DataFrame()
 
+    # Create a dictionary mapping group indices to their data
+    group_dict = {i: g for i, g in enumerate(groups)}
+
+    # Get all unique keys from targets
     all_keys = [t["key"] for t in targets]
 
-    # First, create a lookup of group index to group object for easier reference
-    group_dict = {i: grp for i, grp in enumerate(groups)}
-
-    # Find matching groups for each target
+    # Map each target to its matching groups
     target_to_groups = {}
-    for i, tgt in enumerate(targets):
+    for tgt_idx, tgt in enumerate(targets):
+        ignore_keys = {
+            "key",
+            "interest_variable",
+            "per_cycle",
+            "aggregation",
+            "time_series",
+            "from_group",
+            "group_selection",
+        }
+        crit_keys = set(tgt.keys()) - ignore_keys
+
+        # Find all matching groups
         matching_groups = []
-        exact_matching_groups = []  # Track groups with exact SOC matches
-        tgt_criteria = _get_criteria_dict(tgt)
-
-        # First pass: try to find exact SOC matches
-        for grp_idx, grp in group_dict.items():
-            exact_match = True
-            for c, tval in tgt_criteria.items():
+        for idx, grp in enumerate(groups):
+            match = True
+            for c in crit_keys:
+                tval = tgt[c]
                 gval = grp.get(c, None)
-
                 if c == "crate":
                     if isinstance(tval, list):
                         if len(tval) == 1:
-                            if gval is None or abs(gval - tval[0]) > c_rate_tol:
-                                exact_match = False
+                            if abs(gval - tval[0]) > c_rate_tol:
+                                match = False
                                 break
                         else:
                             lo, hi = tval
                             if gval is None or not (lo <= gval <= hi):
-                                exact_match = False
+                                match = False
                                 break
                     else:
                         if gval is None or abs(gval - tval) > c_rate_tol:
-                            exact_match = False
+                            match = False
                             break
-                elif c == "soc":
-                    # For SOC, only exact matches in this pass
-                    if gval != tval:
-                        exact_match = False
-                        break
                 else:
                     if gval != tval:
-                        exact_match = False
+                        match = False
                         break
+            if match:
+                matching_groups.append(idx)
 
-            if exact_match:
-                exact_matching_groups.append(grp_idx)
-
-        # If exact matches found for SOC, use those only
-        if any(tgt_criteria.get("soc") is not None for _ in [0] if exact_matching_groups):
-            matching_groups = exact_matching_groups
+        # Apply group selection strategy - default to first for single value targets
+        group_selection = tgt.get("group_selection", "all")
+        if group_selection == "first":
+            target_to_groups[tgt_idx] = matching_groups[:1]
+        elif group_selection == "last":
+            target_to_groups[tgt_idx] = matching_groups[-1:]
+        elif group_selection == "all":
+            target_to_groups[tgt_idx] = matching_groups
         else:
-            # Second pass: if no exact SOC matches, use tolerance-based matching
-            for grp_idx, grp in group_dict.items():
-                match = True
-                for c, tval in tgt_criteria.items():
-                    gval = grp.get(c, None)
+            # Default to first if invalid selection
+            target_to_groups[tgt_idx] = matching_groups[:1]
 
-                    if c == "crate":
-                        if isinstance(tval, list):
-                            if len(tval) == 1:
-                                if gval is None or abs(gval - tval[0]) > c_rate_tol:
-                                    match = False
-                                    break
-                            else:
-                                lo, hi = tval
-                                if gval is None or not (lo <= gval <= hi):
-                                    match = False
-                                    break
-                        else:
-                            if gval is None or abs(gval - tval) > c_rate_tol:
-                                match = False
-                                break
-                    # Special handling for SOC with tighter tolerance
-                    elif c == "soc" and gval is not None and tval is not None:
-                        if abs(gval - tval) > 0.5:  # Reduce to 0.5% SOC tolerance
-                            match = False
-                            break
-                    else:
-                        if gval != tval:
-                            match = False
-                            break
-
-                if match:
-                    matching_groups.append(grp_idx)
-
-        target_to_groups[i] = matching_groups
-
-    # Group targets that share the same matching groups
+    # Map groups to targets (reverse mapping)
     groups_to_targets = {}
     for tgt_idx, group_indices in target_to_groups.items():
-        group_key = tuple(sorted(group_indices))
-        if group_key not in groups_to_targets:
-            groups_to_targets[group_key] = []
-        groups_to_targets[group_key].append(tgt_idx)
+        for grp_idx in group_indices:
+            group_key = (grp_idx,)  # Single group as key
+            if group_key not in groups_to_targets:
+                groups_to_targets[group_key] = []
+            groups_to_targets[group_key].append(tgt_idx)
 
     # Build rows based on common matching groups
     rows = []
@@ -309,7 +283,9 @@ def _build_per_cycle_df(groups, targets, c_rate_tol):
     cycle_to_index = {cyc: i for i, cyc in enumerate(cycles)}
 
     for tgt in targets:
+
         tkey = tgt["key"]
+        # print('tkey', tkey)
         ivar = tgt.get("interest_variable")
         agg = tgt.get("aggregation", None)
 
@@ -370,7 +346,7 @@ def _build_time_series_df(groups, targets, c_rate_tol, raw_data):
     time_series_rows = []
 
     # Process regular time-series targets to find the matching groups
-    groups_with_time_series = {}  # Maps group_idx -> target_key -> time_series_data
+    groups_with_time_series = {}
     for tgt in regular_targets:
         tkey = tgt["key"]
         ivar = tgt.get("interest_variable")
@@ -385,8 +361,8 @@ def _build_time_series_df(groups, targets, c_rate_tol, raw_data):
         }
         crit_keys = set(tgt.keys()) - ignore_keys
 
-        # Find matching group
-        matched_group_idx = None
+        # Find all matching groups
+        matching_groups = []
         for idx, grp in enumerate(groups):
             match = True
             for c in crit_keys:
@@ -412,10 +388,10 @@ def _build_time_series_df(groups, targets, c_rate_tol, raw_data):
                         match = False
                         break
             if match:
-                matched_group_idx = idx
-                break
+                matching_groups.append(idx)
 
-        if matched_group_idx is not None:
+        # Process each matching group
+        for matched_group_idx in matching_groups:
             matched_group = groups[matched_group_idx]
             s_i = matched_group["start_index"]
             e_i = matched_group["end_index"]
@@ -436,7 +412,7 @@ def _build_time_series_df(groups, targets, c_rate_tol, raw_data):
                 groups_with_time_series[matched_group_idx][tkey] = values
 
     # Now collect group property values from from_group targets
-    group_properties = {}  # Maps group_idx -> target_key -> static_value
+    group_properties = {}
     for tgt in from_group_targets:
         tkey = tgt["key"]
         ivar = tgt.get("interest_variable")
@@ -451,9 +427,9 @@ def _build_time_series_df(groups, targets, c_rate_tol, raw_data):
         }
         crit_keys = set(tgt.keys()) - ignore_keys
 
-        # For each group in our time-series data, check if it matches this from_group target
-        for group_idx in groups_with_time_series:
-            grp = groups[group_idx]
+        # Find all matching groups
+        matching_groups = []
+        for idx, grp in enumerate(groups):
             match = True
             for c in crit_keys:
                 tval = tgt[c]
@@ -477,14 +453,18 @@ def _build_time_series_df(groups, targets, c_rate_tol, raw_data):
                     if gval != tval:
                         match = False
                         break
+            if match:
+                matching_groups.append(idx)
 
-            if match and ivar in grp:
-                if group_idx not in group_properties:
-                    group_properties[group_idx] = {}
+        # Store properties for each matching group
+        for matched_group_idx in matching_groups:
+            matched_group = groups[matched_group_idx]
+            if matched_group_idx not in group_properties:
+                group_properties[matched_group_idx] = {}
+            if ivar in matched_group:
+                group_properties[matched_group_idx][tkey] = matched_group[ivar]
 
-                group_properties[group_idx][tkey] = grp[ivar]
-
-    # Build rows combining time-series data with from_group properties
+    # Build the final DataFrame
     rows = []
     for group_idx, target_series in groups_with_time_series.items():
         # Determine length of time-series

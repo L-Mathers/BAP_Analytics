@@ -357,7 +357,7 @@ def estimate_soc(
     return df
 
 
-def assign_cycle_keys(data, is_rpt):
+def assign_cycle_keys(data):
     """
     Assigns cycle numbers if we have a charge->discharge pairing.
     If is_rpt=True, we only assign if the discharge is full_cycle.
@@ -365,18 +365,17 @@ def assign_cycle_keys(data, is_rpt):
     last_charge = None
     cycle_number = 0
     for entry in data:
-        if entry["group_type"] == "charge":
+        if entry["group_type"] == "charge" and entry["test_type"] != "rpt":
             last_charge = entry
         elif entry["group_type"] == "discharge" and last_charge:
-            if not is_rpt:
+            if entry["test_type"] != "rpt":
                 cycle_number += 1
                 last_charge["cycle"] = cycle_number
                 entry["cycle"] = cycle_number
                 last_charge = None
-            elif is_rpt:
+            elif entry["test_type"] == "rpt":
                 last_charge["cycle"] = cycle_number
                 entry["cycle"] = cycle_number
-
     return data, cycle_number
 
 
@@ -490,7 +489,7 @@ def add_cv_steps(
     vhigh: float,
     vlow: float,
     voltage_tolerance: float = 1e-2,
-    current_delta_threshold: float = 0.05,
+    current_delta_threshold: float = 0.01,
     voltage_delta_threshold: float = 0.0001,
 ):
     """
@@ -746,57 +745,86 @@ def create_merged_capacity(
 def normalize_capacity(
     group_data, nominal_normalization, first_cycle_normalization, nominal_capacity
 ):
-    # Separate charge and discharge groups
-    charge_groups = [
-        entry for entry in group_data if entry["group_type"] == "charge" and entry["crate"] != 0
-    ]
-    discharge_groups = [
-        entry for entry in group_data if entry["group_type"] == "discharge" and entry["crate"] != 0
-    ]
+    """
+    Normalize capacity based on nominal capacity or first cycle capacity.
 
-    # Find the most common non-zero crate values for charge and discharge separately
-    most_common_charge_crate = Counter([g["crate"] for g in charge_groups]).most_common(1)
-    most_common_discharge_crate = Counter([g["crate"] for g in discharge_groups]).most_common(1)
+    Args:
+        group_data (list): List of group dictionaries
+        nominal_normalization (bool): Whether to normalize by nominal capacity
+        first_cycle_normalization (bool): Whether to normalize by first cycle capacity
+        nominal_capacity (float): Nominal capacity value
 
-    most_common_charge_crate = most_common_charge_crate[0][0] if most_common_charge_crate else None
-    most_common_discharge_crate = (
-        most_common_discharge_crate[0][0] if most_common_discharge_crate else None
-    )
+    Returns:
+        list: Updated group_data with normalized capacity values
+    """
+    if not (nominal_normalization or first_cycle_normalization):
+        return group_data
 
-    # Find the first group with each most common crate and get its capacity
-    first_charge_capacity = next(
-        (g["capacity"] for g in charge_groups if g["crate"] == most_common_charge_crate), None
-    )
-    first_discharge_capacity = next(
-        (g["capacity"] for g in discharge_groups if g["crate"] == most_common_discharge_crate), None
-    )
-
+    # Find the first non-zero cycle with both charge and discharge
+    cycle_data = {}
     for g in group_data:
-        if g["group_type"] not in ["charge", "discharge"]:
+        cycle = g.get("cycle", 0)
+        if cycle <= 0:
             continue
-        # Label groups with the most common charge or discharge crate as "Cycle Aging"
-        if g["group_type"] == "charge":
-            if g["crate"] == most_common_charge_crate:
-                g["test_type"] = "Cycle Aging"
-            else:
-                g["test_type"] = "Rate Performance Test"
 
-        if g["group_type"] == "discharge":
-            if g["crate"] == most_common_discharge_crate:
-                g["test_type"] = "Cycle Aging"
-            else:
-                g["test_type"] = "Rate Performance Test"
+        if cycle not in cycle_data:
+            cycle_data[cycle] = {"charge": None, "discharge": None}
 
-        # Apply normalization
-        if nominal_normalization:
-            g["nominal_normalized_capacity"] = (
-                g["capacity"] / nominal_capacity if nominal_capacity else None
-            )
+        if g["group_type"] == "charge" and g.get("capacity", 0) > 0:
+            cycle_data[cycle]["charge"] = g.get("capacity", 0)
+        elif g["group_type"] == "discharge" and g.get("capacity", 0) > 0:
+            cycle_data[cycle]["discharge"] = g.get("capacity", 0)
+
+    # Find first complete cycle (with both charge and discharge)
+    first_complete_cycle = None
+    first_charge_capacity = None
+    first_discharge_capacity = None
+
+    for cycle, data in sorted(cycle_data.items()):
+        if data["charge"] and data["discharge"]:
+            first_complete_cycle = cycle
+            first_charge_capacity = data["charge"]
+            first_discharge_capacity = data["discharge"]
+            break
+
+    if not first_complete_cycle:
+        print("Warning: No complete cycle found for normalization")
+        return group_data
+
+    # Apply normalization to all groups
+    for g in group_data:
+        # Nominal capacity normalization
+        if nominal_normalization and nominal_capacity > 0:
+            if g["group_type"] == "charge" and g.get("capacity", 0) > 0:
+                g["nominal_normalized_capacity"] = (g["capacity"] / nominal_capacity) * 100
+            elif g["group_type"] == "discharge" and g.get("capacity", 0) > 0:
+                g["nominal_normalized_capacity"] = (g["capacity"] / nominal_capacity) * 100
+
+        # First cycle normalization
         if first_cycle_normalization:
-            if g["group_type"] == "charge" and first_charge_capacity:
-                g["firstC_normalized_capacity"] = g["capacity"] / first_charge_capacity
-            elif g["group_type"] == "discharge" and first_discharge_capacity:
-                g["firstC_normalized_capacity"] = g["capacity"] / first_discharge_capacity
+            if (
+                g["group_type"] == "charge"
+                and g.get("capacity", 0) > 0
+                and first_charge_capacity > 0
+            ):
+                g["first_cycle_normalized_capacity"] = (g["capacity"] / first_charge_capacity) * 100
+            elif (
+                g["group_type"] == "discharge"
+                and g.get("capacity", 0) > 0
+                and first_discharge_capacity > 0
+            ):
+                g["first_cycle_normalized_capacity"] = (
+                    g["capacity"] / first_discharge_capacity
+                ) * 100
+
+    # Count how many groups were normalized
+    nominal_count = sum(1 for g in group_data if "nominal_normalized_capacity" in g)
+    first_cycle_count = sum(1 for g in group_data if "first_cycle_normalized_capacity" in g)
+
+    if nominal_normalization:
+        print(f"Applied nominal normalization to {nominal_count} groups")
+    if first_cycle_normalization:
+        print(f"Applied first cycle normalization to {first_cycle_count} groups")
 
     return group_data
 
@@ -813,6 +841,13 @@ def normalize_dcir(group_data, first_pulse, dcir_normalization):
     Returns:
         list: Updated group_data with normalized resistance values added
     """
+    # Validate dcir_normalization
+    if not dcir_normalization or len(dcir_normalization) != 2:
+        print(
+            f"Warning: Invalid dcir_normalization format: {dcir_normalization}. Skipping normalization."
+        )
+        return group_data
+
     soc_limit = dcir_normalization[0]
     time_limit = dcir_normalization[1]
 
@@ -832,20 +867,16 @@ def normalize_dcir(group_data, first_pulse, dcir_normalization):
             if ir_val and ir_val > 0:
                 # Add the normalized value to the same group
                 g[normalized_key] = ir_val / first_pulse
-
-    # For debugging
-    normalized_groups = sum(1 for g in group_data if normalized_key in g)
-    print(f"Normalized {normalized_groups} groups with {normalized_key}")
-
     return group_data
 
 
-def seperate_test_types(group_data, tolerance=0.05):
+def seperate_test_types(group_data, test_type, tolerance=0.05):
     """
     Classifies groups as either 'cycling' or 'rpt' based on their C-rates.
 
     Args:
         group_data (list): List of dictionaries containing group information
+        test_type (str): The test type ("Rate Performance Test", "Cycle Aging", or "Combined RPT/Cycling")
         tolerance (float): C-rate tolerance for determining if a group matches the average
 
     Returns:
@@ -867,23 +898,53 @@ def seperate_test_types(group_data, tolerance=0.05):
         else 0
     )
 
-    # Print average C-rates for debugging
-    print(f"Average charge C-rate: {avg_charge_crate:.2f}")
-    print(f"Average discharge C-rate: {avg_discharge_crate:.2f}")
-
     # Assign test_type to each group
+    previous_test_type = None
+
+    # Handle the different test types consistently
+    if test_type == "Rate Performance Test":
+        for g in group_data:
+            g["test_type"] = "rpt"
+    elif test_type == "Cycle Aging":
+        for g in group_data:
+            g["test_type"] = "cycling"
+    elif test_type == "Combined RPT/Cycling":
+        for g in group_data:
+            if g["group_type"] == "charge":
+                crate = g.get("crate", 0)
+                if abs(crate - avg_charge_crate) <= tolerance and not g["pulse"]:
+                    g["test_type"] = "cycling"
+                    previous_test_type = "cycling"
+                else:
+                    g["test_type"] = "rpt"
+                    previous_test_type = "rpt"
+            elif g["group_type"] == "discharge":
+                crate = g.get("crate", 0)
+                if abs(crate - avg_discharge_crate) <= tolerance and not g["pulse"]:
+                    g["test_type"] = "cycling"
+                    previous_test_type = "cycling"
+                else:
+                    g["test_type"] = "rpt"
+                    previous_test_type = "rpt"
+            else:
+                g["test_type"] = previous_test_type if previous_test_type else "unknown"
+    else:
+        # Default behavior for unknown test types
+        for g in group_data:
+            g["test_type"] = "unknown"
+    cycling_count = 0
+    rpt_count = 0
     for g in group_data:
-        if g["group_type"] == "charge":
-            crate = g.get("crate", 0)
-            if abs(crate - avg_charge_crate) <= tolerance:
-                g["test_type"] = "cycling"
-            else:
-                g["test_type"] = "rpt"
-        elif g["group_type"] == "discharge":
-            crate = g.get("crate", 0)
-            if abs(crate - avg_discharge_crate) <= tolerance:
-                g["test_type"] = "cycling"
-            else:
-                g["test_type"] = "rpt"
+        if g["test_type"] == "cycling":
+            cycling_count += 1
+        elif g["test_type"] == "rpt":
+            rpt_count += 1
+        print("test_type:", g["test_type"])
+        print("crate:", g["crate"])
+        print("pulse:", g["pulse"])
+        print("group_type:", g["group_type"])
+        print("--------------------------------")
+
+    print(f"found {cycling_count} cycling groups and {rpt_count} rpt groups")
 
     return group_data

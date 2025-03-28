@@ -17,7 +17,6 @@ def build_dynamic_rpt_config(base_config, user_input):
         updated_config["targets"]["Rate Performance Test"] = []
 
     rpt_targets = updated_config["targets"]["Rate Performance Test"]
-
     # Example: add DCIR for each user-defined pulse
     for dur in user_input.get("pulse_durations", []):
         rpt_targets.append(
@@ -27,6 +26,7 @@ def build_dynamic_rpt_config(base_config, user_input):
                 "pulse": True,
                 "interest_variable": f"internal_resistance_{dur}s",
                 "per_cycle": False,
+                "test_type": "rpt",
             }
         )
         rpt_targets.append(
@@ -36,6 +36,7 @@ def build_dynamic_rpt_config(base_config, user_input):
                 "pulse": True,
                 "interest_variable": "soc",
                 "per_cycle": False,
+                "test_type": "rpt",
             }
         )
 
@@ -46,6 +47,7 @@ def build_dynamic_rpt_config(base_config, user_input):
                 "interest_variable": "cycle",
                 "pulse": True,
                 "per_cycle": False,
+                "test_type": "rpt",
             }
         )
 
@@ -58,6 +60,7 @@ def build_dynamic_rpt_config(base_config, user_input):
                 "pulse": False,
                 "interest_variable": "max_temp",
                 "per_cycle": False,
+                "test_type": "rpt",
             }
         )
         rpt_targets.append(
@@ -68,6 +71,7 @@ def build_dynamic_rpt_config(base_config, user_input):
                 "pulse": False,
                 "interest_variable": "capacity",
                 "per_cycle": False,
+                "test_type": "rpt",
             }
         )
         rpt_targets.append(
@@ -78,6 +82,7 @@ def build_dynamic_rpt_config(base_config, user_input):
                 "pulse": False,
                 "interest_variable": "duration",
                 "per_cycle": False,
+                "test_type": "rpt",
             }
         )
         rpt_targets.append(
@@ -88,12 +93,16 @@ def build_dynamic_rpt_config(base_config, user_input):
                 "interest_variable": "cycle",
                 "pulse": False,
                 "per_cycle": False,
+                "test_type": "rpt",
             }
         )
 
-    soc, dur = user_input.get("dcir_normalization", (None, None))
-    if soc != None:
+    # Get dcir_normalization parameter
+    dcir_norm = user_input.get("dcir_normalization", None)
 
+    # Only add normalized resistance target if dcir_norm is non-empty and has 2 values
+    if dcir_norm and len(dcir_norm) == 2:
+        soc, dur = dcir_norm
         rpt_targets.append(
             {
                 "key": f"normalized_internal_resistance_{dur}s",
@@ -101,6 +110,7 @@ def build_dynamic_rpt_config(base_config, user_input):
                 "pulse": True,
                 "interest_variable": f"normalized_internal_resistance_{dur}s",
                 "per_cycle": False,
+                "test_type": "rpt",
             }
         )
     if user_input.get("pocv", False):
@@ -112,6 +122,7 @@ def build_dynamic_rpt_config(base_config, user_input):
                 "crate": [0.01, 0.1],
                 "per_cycle": False,
                 "time_series": True,
+                "test_type": "rpt",
             }
         ),
         rpt_targets.append(
@@ -122,6 +133,7 @@ def build_dynamic_rpt_config(base_config, user_input):
                 "crate": [0.01, 0.1],
                 "per_cycle": False,
                 "time_series": True,
+                "test_type": "rpt",
             }
         ),
         rpt_targets.append(
@@ -132,6 +144,7 @@ def build_dynamic_rpt_config(base_config, user_input):
                 "crate": [0.01, 0.1],
                 "per_cycle": False,
                 "time_series": True,
+                "test_type": "rpt",
             }
         )
 
@@ -155,10 +168,11 @@ def build_dynamic_aging_config(base_config, user_input):
     if user_input.get("nominal_normalization", False):
         aging_targets.append(
             {
-                "key": "firstC_normalized_capacity",
+                "key": "nominal_normalized_capacity",
                 "group_type": "discharge",
-                "interest_variable": "firstC_normalized_capacity",
+                "interest_variable": "nominal_normalized_capacity",
                 "per_cycle": True,
+                "test_type": "cycling",
             }
         )
 
@@ -166,10 +180,11 @@ def build_dynamic_aging_config(base_config, user_input):
     if user_input.get("first_cycle_normalization", False):
         aging_targets.append(
             {
-                "key": "nominal_normalized_capacity",
+                "key": "first_cycle_normalized_capacity",
                 "group_type": "discharge",
-                "interest_variable": "nominal_normalized_capacity",
+                "interest_variable": "first_cycle_normalized_capacity",
                 "per_cycle": True,
+                "test_type": "cycling",
             }
         )
 
@@ -214,9 +229,17 @@ def build_config_for_test_type(base_config, test_type, user_input):
     elif test_type == "Calendar Aging":
         final_config = build_dynamic_calendar_config(base_config, user_input)
     elif test_type == "Combined RPT/Cycling":
-        temp_config = build_dynamic_rpt_config(base_config, user_input)
-        final_config = build_dynamic_aging_config(temp_config, user_input)
+        rpt_config = build_dynamic_rpt_config(base_config, user_input)
+        aging_config = build_dynamic_aging_config(base_config, user_input)
+        final_config = {
+            "targets": {
+                "Combined RPT/Cycling": rpt_config["targets"]["Rate Performance Test"]
+                + aging_config["targets"]["Cycle Aging"]
+            }
+        }
+
     else:
         # No dynamic changes - just use the base config
         final_config = base_config
+
     return final_config

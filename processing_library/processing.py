@@ -67,9 +67,19 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
     low_thr = pseudo_low * 1.05
 
     dcir_normalization = user_input.get("dcir_normalization", None)
+    if dcir_normalization and len(dcir_normalization) != 2:
+        print(
+            f"Warning: Invalid dcir_normalization format: {dcir_normalization}. Should be [SOC, duration]"
+        )
+        dcir_normalization = None
+
     nominal_normalization = user_input.get("nominal_normalization", False)
     first_cycle_normalization = user_input.get("first_cycle_normalization", False)
     group_data = []
+
+    # Track previous charge and discharge groups for full cycle detection
+    prev_charge_end_voltage = None
+    prev_discharge_end_voltage = None
 
     # 3) Build group_data for each group
     for gnum, gdf in grouped:
@@ -81,13 +91,17 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
         init_dch_cap = gdf["discharge_capacity"].iloc[0]
         init_ch_en = gdf["charge_energy"].iloc[0]
         init_dch_en = gdf["discharge_energy"].iloc[0]
+
+        start_voltage = gdf["voltage"].iloc[0]
+        end_voltage = gdf["voltage"].iloc[-1]
+
         group_dict = {
             "group_number": gnum,
             "start_index": start_i,
             "end_index": end_i,
             "duration": dur,
-            "start_voltage": gdf["voltage"].iloc[0],
-            "end_voltage": gdf["voltage"].iloc[-1],
+            "start_voltage": start_voltage,
+            "end_voltage": end_voltage,
             "capacity": None,
             "energy": None,
             "pulse": (dur < 40 and dur > 5),
@@ -190,9 +204,12 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
 
         if is_charge:
             group_dict["group_type"] = "charge"
-            full_c = (group_dict["start_voltage"] <= low_thr) and (
-                group_dict["end_voltage"] >= high_thr
-            )
+            # Check for full cycle using previous discharge group's start voltage if available
+            if prev_discharge_end_voltage is not None:
+                full_c = (prev_discharge_end_voltage <= low_thr) and (end_voltage >= high_thr)
+
+            else:
+                full_c = (start_voltage <= low_thr) and (end_voltage >= high_thr)
             group_dict["full_cycle"] = full_c
 
             # If no CV portion found
@@ -207,11 +224,16 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
             group_dict["ch_energy_throughput"] = ch_en_thru / 1000
             group_dict["ch_capacity_throughput"] = ch_cap_thru / 1000
 
+            # Update previous charge start voltage
+            prev_charge_end_voltage = end_voltage
+
         elif is_discharge:
             group_dict["group_type"] = "discharge"
-            full_c = (group_dict["start_voltage"] >= high_thr) and (
-                group_dict["end_voltage"] <= low_thr
-            )
+            # Check for full cycle using previous charge group's start voltage if available
+            if prev_charge_end_voltage is not None:
+                full_c = (prev_charge_end_voltage >= high_thr) and (end_voltage <= low_thr)
+            else:
+                full_c = (start_voltage >= high_thr) and (end_voltage <= low_thr)
             group_dict["full_cycle"] = full_c
 
             if group_dict["cc_capacity"] is None:
@@ -236,6 +258,9 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
                 group_dict["relative_capacity"] = (group_dict["capacity"] / first_cap) * 100
                 group_dict["relative_energy"] = (group_dict["energy"] / first_en) * 100
 
+            # Update previous discharge start voltage
+            prev_discharge_end_voltage = end_voltage
+
         else:
             group_dict["group_type"] = "rest"
             # Possibly mark as calendar if dur > 15 days
@@ -244,6 +269,8 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
                 group_dict["voltage_drop"] = group_dict["start_voltage"] - group_dict["end_voltage"]
 
         group_data.append(group_dict)
+        # No longer need this since we're tracking charge and discharge separately
+        # prev_group_start_voltage = start_voltage
 
     pulse_durations = user_input.get("pulse_durations", [10, 2, 0.1]) if user_input else [10]
     for gd in group_data:
@@ -265,16 +292,17 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
                         mOhms = ohms * 1000
                         gd[f"internal_resistance_{dur}s"] = mOhms
 
-                        if dcir_normalization is not None:
-
+                        # Check for first pulse for normalization
+                        if dcir_normalization and len(dcir_normalization) == 2:
+                            target_dur = dcir_normalization[1]
+                            target_soc = dcir_normalization[0]
                             if (
-                                not first_pulse
-                                and dur == dcir_normalization[1]
-                                and gd["soc"] == dcir_normalization[0]
+                                dur == target_dur
+                                and abs(gd["soc"] - target_soc) <= 1
+                                and not first_pulse
                             ):
                                 first_dcir = mOhms
                                 first_pulse = True
-
                     else:
                         gd[f"internal_resistance_{dur}s"] = None
 
@@ -292,28 +320,24 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
                     gd["relaxation_end"] = e_i2
 
     # If dcir_normalization is specified, normalize the values after all groups are processed
-    if dcir_normalization and first_pulse and first_dcir > 0:
+    if dcir_normalization and len(dcir_normalization) == 2 and first_pulse and first_dcir > 0:
         group_data = normalize_dcir(group_data, first_dcir, dcir_normalization)
 
+    # Classify groups as cycling or rpt
+    group_data = seperate_test_types(group_data, test_type)
+
     # Assign cycle keys
-    group_data, _ = assign_cycle_keys(group_data, is_rpt)
+    group_data, _ = assign_cycle_keys(group_data)
 
     # Calculate coulombic and energy efficiency
     group_data = calculate_coulombic_and_energy_eff(group_data)
 
-    # Classify groups as cycling or rpt
-    group_data = seperate_test_types(group_data)
-
-    # Normalize capacity if requested
-    if user_input.get("nominal_normalization", False) or user_input.get(
-        "first_cycle_normalization", False
-    ):
-        group_data = normalize_capacity(
-            group_data,
-            user_input.get("nominal_normalization", False),
-            user_input.get("first_cycle_normalization", False),
-            capacity,
-        )
+    group_data = normalize_capacity(
+        group_data,
+        user_input.get("nominal_normalization", False),
+        user_input.get("first_cycle_normalization", False),
+        capacity,
+    )
 
     # Extract final metrics using the targets from the config
     section_targets = config["targets"].get(test_type, [])
@@ -334,7 +358,6 @@ def process_lifetime_test(data: pd.DataFrame, combined_input: dict, config: dict
     test_type = combined_input.get("test_type", None)
     capacity = combined_input.get("cell_limits", {}).get("capacity", None)
     user_input = combined_input.get("user_input", {})
-
     # 2) Merge static + dynamic config
     final_config = build_config_for_test_type(config, test_type, user_input)
     is_rpt = test_type == "Rate Performance Test" or test_type == "Combined RPT/Cycling"
@@ -352,8 +375,8 @@ def process_lifetime_test(data: pd.DataFrame, combined_input: dict, config: dict
             "Ah-Dis-Set",
         ],
         "charge_capacity": ["charge capacity (ah)", "ccap", "charge_capacity", "Ah-Ch-Set"],
-        "discharge_energy": ["discharge energy (wh)", "denergy", "discharge_energy", "Line"],
-        "charge_energy": ["charge energy (wh)", "cenergy", "charge_energy", "State"],
+        "discharge_energy": ["discharge energy (wh)", "denergy", "discharge_energy", "Wh-Dis-Set"],
+        "charge_energy": ["charge energy (wh)", "cenergy", "charge_energy", "Wh-Ch-Set"],
     }
 
     matched_columns = {}
@@ -378,6 +401,13 @@ def process_lifetime_test(data: pd.DataFrame, combined_input: dict, config: dict
 
     # 4 Rename columns
     data = data.rename(columns=matched_columns)
+    # check if time is in seconds
+    if data["time"].max() < 1000:
+        data["time"] = data["time"] * 3600
+        print("converted time to seconds")
+
+    # implement zero current tolerance
+    data["current"] = data["current"].apply(lambda x: 0 if abs(x) < 0.015 else x)
 
     data = create_merged_capacity(data)
 
@@ -388,10 +418,6 @@ def process_lifetime_test(data: pd.DataFrame, combined_input: dict, config: dict
     if temp_cols:
         picked = max(temp_cols, key=lambda x: data[x].max())
         data["temperature"] = data[picked]
-
-    # check if time is in seconds
-    if data["time"].max() < 1000:
-        data["time"] = data["time"] * 3600
 
     # 6) Run the core extraction logic
     result_df = data_extractor(
