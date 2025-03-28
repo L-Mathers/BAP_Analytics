@@ -760,9 +760,13 @@ def normalize_capacity(
     if not (nominal_normalization or first_cycle_normalization):
         return group_data
 
-    # Find the first non-zero cycle with both charge and discharge
+    # Organize cycle data
     cycle_data = {}
+    total_charge, total_discharge, count_charge, count_discharge = 0, 0, 0, 0
+
     for g in group_data:
+        if g["test_type"] != "cycling":
+            continue
         cycle = g.get("cycle", 0)
         if cycle <= 0:
             continue
@@ -770,49 +774,48 @@ def normalize_capacity(
         if cycle not in cycle_data:
             cycle_data[cycle] = {"charge": None, "discharge": None}
 
-        if g["group_type"] == "charge" and g.get("capacity", 0) > 0:
-            cycle_data[cycle]["charge"] = g.get("capacity", 0)
-        elif g["group_type"] == "discharge" and g.get("capacity", 0) > 0:
-            cycle_data[cycle]["discharge"] = g.get("capacity", 0)
+        capacity = g.get("capacity", 0)
+        if g["group_type"] == "charge" and capacity > 0:
+            cycle_data[cycle]["charge"] = capacity
+            total_charge += capacity
+            count_charge += 1
+        elif g["group_type"] == "discharge" and capacity > 0:
+            cycle_data[cycle]["discharge"] = capacity
+            total_discharge += capacity
+            count_discharge += 1
 
-    # Find first complete cycle (with both charge and discharge)
-    first_complete_cycle = None
-    first_charge_capacity = None
-    first_discharge_capacity = None
+    # Calculate averages
+    avg_charge_capacity = total_charge / count_charge if count_charge else 0
+    avg_discharge_capacity = total_discharge / count_discharge if count_discharge else 0
+
+    # Find suitable first complete cycle (>= 90% avg)
+    first_charge_capacity, first_discharge_capacity = None, None
 
     for cycle, data in sorted(cycle_data.items()):
-        if data["charge"] and data["discharge"]:
-            first_complete_cycle = cycle
+        charge_valid = data["charge"] and data["charge"] >= 0.9 * avg_charge_capacity
+        discharge_valid = data["discharge"] and data["discharge"] >= 0.9 * avg_discharge_capacity
+
+        if charge_valid and discharge_valid:
             first_charge_capacity = data["charge"]
             first_discharge_capacity = data["discharge"]
+            print(
+                f"Found first complete cycle: {cycle} with charge capacity {first_charge_capacity} and discharge capacity {first_discharge_capacity}"
+            )
             break
 
-    if not first_complete_cycle:
-        print("Warning: No complete cycle found for normalization")
+    if not (first_charge_capacity and first_discharge_capacity):
+        print("Warning: No suitable first complete cycle found for normalization")
         return group_data
 
-    # Apply normalization to all groups
+    # Apply normalization
     for g in group_data:
-        # Nominal capacity normalization
-        if nominal_normalization and nominal_capacity > 0:
-            if g["group_type"] == "charge" and g.get("capacity", 0) > 0:
-                g["nominal_normalized_capacity"] = (g["capacity"] / nominal_capacity) * 100
-            elif g["group_type"] == "discharge" and g.get("capacity", 0) > 0:
-                g["nominal_normalized_capacity"] = (g["capacity"] / nominal_capacity) * 100
+        if nominal_normalization and nominal_capacity > 0 and g.get("capacity", 0) is not None:
+            g["nominal_normalized_capacity"] = (g["capacity"] / nominal_capacity) * 100
 
-        # First cycle normalization
-        if first_cycle_normalization:
-            if (
-                g["group_type"] == "charge"
-                and g.get("capacity", 0) > 0
-                and first_charge_capacity > 0
-            ):
+        if first_cycle_normalization and g.get("capacity", 0) is not None:
+            if g["group_type"] == "charge" and first_charge_capacity > 0:
                 g["first_cycle_normalized_capacity"] = (g["capacity"] / first_charge_capacity) * 100
-            elif (
-                g["group_type"] == "discharge"
-                and g.get("capacity", 0) > 0
-                and first_discharge_capacity > 0
-            ):
+            elif g["group_type"] == "discharge" and first_discharge_capacity > 0:
                 g["first_cycle_normalized_capacity"] = (
                     g["capacity"] / first_discharge_capacity
                 ) * 100
@@ -939,11 +942,6 @@ def seperate_test_types(group_data, test_type, tolerance=0.05):
             cycling_count += 1
         elif g["test_type"] == "rpt":
             rpt_count += 1
-        print("test_type:", g["test_type"])
-        print("crate:", g["crate"])
-        print("pulse:", g["pulse"])
-        print("group_type:", g["group_type"])
-        print("--------------------------------")
 
     print(f"found {cycling_count} cycling groups and {rpt_count} rpt groups")
 

@@ -8,7 +8,7 @@
             "pulse": false,
             "full_cycle": true,
             "group_selection": "first",
-            "crate": [0.25, 0.5],
+            "crate": [0.11, 0.5],
             "interest_variable": "capacity",
             "per_cycle": false,
             "test_type": "rpt"

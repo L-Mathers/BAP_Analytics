@@ -44,7 +44,6 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
     df = estimate_soc(df, nom_cap=capacity)
     # Keep track of original index
     df["original_index"] = df.index
-
     # Group the data
     grouped = df.groupby("group")
     for gnum, gdf in grouped:
@@ -104,7 +103,7 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
             "end_voltage": end_voltage,
             "capacity": None,
             "energy": None,
-            "pulse": (dur < 40 and dur > 5),
+            "pulse": (dur < 60 and dur > 5),
             "full_cycle": False,
             "cc_capacity": None,
             "cv_capacity": None,
@@ -328,7 +327,17 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
 
     # Assign cycle keys
     group_data, _ = assign_cycle_keys(group_data)
-
+    # Print the first 100 non-rest groups
+    non_rest_groups = [gd for gd in group_data if gd["group_type"] != "rest"]
+    for group in non_rest_groups[:100]:
+        print("cycle", group["cycle"])
+        print("test typpe", group["test_type"])
+        print("group type", group["group_type"])
+        print("pulse", group["pulse"])
+        print("duration", group["duration"])
+        print("crate", group["crate"])
+        print("capacity", group["capacity"])
+        print("----------------------")
     # Calculate coulombic and energy efficiency
     group_data = calculate_coulombic_and_energy_eff(group_data)
 
@@ -402,9 +411,12 @@ def process_lifetime_test(data: pd.DataFrame, combined_input: dict, config: dict
     # 4 Rename columns
     data = data.rename(columns=matched_columns)
     # check if time is in seconds
-    if data["time"].max() < 1000:
+    if data["time"].max() < 10000:
         data["time"] = data["time"] * 3600
         print("converted time to seconds")
+
+    # only take data before 1.4 mil seconds
+    # data = data[data["time"] < 1400000]
 
     # implement zero current tolerance
     data["current"] = data["current"].apply(lambda x: 0 if abs(x) < 0.015 else x)
