@@ -19,7 +19,7 @@
             "full_cycle": true,
             "group_selection": "first",
             "interest_variable": "cycle",
-            "crate": [0.25, 0.5],
+            "crate": [0.11, 0.5],
             "pulse": false,
             "per_cycle": false,
             "test_type": "rpt"

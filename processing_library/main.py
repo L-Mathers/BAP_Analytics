@@ -31,6 +31,14 @@ def main():
     path_to_data_csv = (
         "/Users/liammathers/Desktop/Github/BAP_Analytics/karcher_data/5_1993_AllData_part_1.csv"
     )
+
+    # rpt
+    path_to_data_csv = (
+        "/Users/liammathers/Desktop/Github/BAP_Analytics/karcher_data/5_1970_AllData_part_1.csv"
+    )
+
+    path_to_data_csv = "/Users/liammathers/Desktop/Github/BAP_Analytics/Daimler/1723817650_31_1_DT_DCIR_0deg_part1_AllData.csv"
+
     # Load the static dictionary
     with open(path_to_static_dict, "r") as f:
         base_config = json.load(f)
@@ -41,37 +49,36 @@ def main():
     # Define test parameters
     combined_input = {
         "test_type": "Rate Performance Test",
-        "cell_limits": {"capacity": 4},
+        "cell_limits": {"capacity": 159},
         "user_input": {
-            "pulse_durations": [1, 5],
+            "pulse_durations": [1, 5, 10],
             "special_crates": [],
             "voltage_relaxation": False,
             "dcir_normalization": [],
-            "pocv": False,
         },
     }
-    combined_input = {
-        "test_type": "Cycle Aging",
-        "cell_limits": {"capacity": 3.5},
-        "user_input": {
-            "nominal_normalization": True,
-            "first_cycle_normalization": True,
-        },
-    }
+    # combined_input = {
+    #     "test_type": "Cycle Aging",
+    #     "cell_limits": {"capacity": 3.5},
+    #     "user_input": {
+    #         "nominal_normalization": True,
+    #         "first_cycle_normalization": True,
+    #     },
+    # }
 
-    combined_input = {
-        "test_type": "Combined RPT/Cycling",
-        "cell_limits": {"capacity": 3.5},
-        "user_input": {
-            "pulse_durations": [1, 5],
-            "special_crates": [],
-            "voltage_relaxation": False,
-            "dcir_normalization": [50, 1],
-            "pocv": False,
-            "nominal_normalization": True,
-            "first_cycle_normalization": True,
-        },
-    }
+    # combined_input = {
+    #     "test_type": "Combined RPT/Cycling",
+    #     "cell_limits": {"capacity": 159},
+    #     "user_input": {
+    #         "pulse_durations": [1, 5, 10],
+    #         "special_crates": [],
+    #         "voltage_relaxation": False,
+    #         "dcir_normalization": [50, 1],
+    #         "pocv": False,
+    #         "nominal_normalization": True,
+    #         "first_cycle_normalization": True,
+    #     },
+    # }
 
     # Process the test data
     # 4) Call the processing function

@@ -250,9 +250,14 @@ def estimate_soc(
                 # Only update accumulated capacity if update_nominal is true
                 accumulated_capacity[evt_idx] = nominal_capacity
                 # Update the baseline for the next segment
+                print("update entry WTF")
 
-            nominal_capacity = accumulated_capacity[evt_idx - 1]
+            # nominal_capacity = accumulated_capacity[evt_idx - 1]
             current_baseline = accumulated_capacity[evt_idx - 1]
+            current_baseline = nominal_capacity
+            print(f"Updated nominal capacity to {nominal_capacity} at index {evt_idx}")
+            print(f"Current baseline set to {current_baseline} at index {evt_idx}")
+            print("current accumulated capacity")
 
         elif evt_type == "discharge":
             # For full discharge events, set SOC to 0%
@@ -297,63 +302,8 @@ def estimate_soc(
     # Store in DataFrame
     df["Accumulated Capacity"] = accumulated_capacity
     df["soc"] = estimated_soc
-    df.to_csv("soc-analysis-V2.csv", index=False)
-    import plotly.graph_objs as go
-    from plotly.subplots import make_subplots
+    df.to_csv("PostSOC_estimation.csv", index=False)
 
-    # Create subplot layout (2 rows, 1 column)
-    fig = make_subplots(
-        rows=2,
-        cols=1,
-        shared_xaxes=True,
-        subplot_titles=("Battery Capacity", "State of Charge (SOC)"),
-    )
-
-    # Plot Capacity and Accumulated Capacity
-    fig.add_trace(
-        go.Scatter(x=df.index, y=df[capacity_col], mode="lines", name="Capacity", opacity=0.7),
-        row=1,
-        col=1,
-    )
-
-    fig.add_trace(
-        go.Scatter(
-            x=df.index,
-            y=df["Accumulated Capacity"],
-            mode="lines",
-            name="Accumulated Capacity",
-            opacity=0.7,
-        ),
-        row=1,
-        col=1,
-    )
-
-    # Plot SOC
-    fig.add_trace(
-        go.Scatter(
-            x=df.index, y=df["soc"], mode="lines", name="SOC", line=dict(color="green"), opacity=0.7
-        ),
-        row=2,
-        col=1,
-    )
-
-    # Update layout
-    fig.update_layout(
-        height=700,
-        width=1000,
-        title_text="Battery Capacity and State of Charge Analysis",
-        showlegend=True,
-    )
-
-    fig.update_yaxes(title_text="Capacity (Ah)", row=1, col=1)
-    fig.update_yaxes(title_text="State of Charge (%)", row=2, col=1)
-    fig.update_xaxes(title_text="Index", row=2, col=1)
-
-    # Save as HTML
-    fig.write_html("cycle2_battery_analysis_plot.html")
-
-    # Optional: display in Jupyter Notebook
-    # fig.show()
     return df
 
 
@@ -468,7 +418,7 @@ def psuedo_limit_extraction(df: pd.DataFrame, zero_current_tolerance: float = 0.
     # Filter only for averaging purposes, not df output
     filtered = df[df["group"].isin(valid)]
 
-    df.to_csv("psuedo.csv")
+    df.to_csv("PostGroup_assignment.csv")
     # Approx pseudo-limits from the filtered region
     avg_last_volt_charge = (
         filtered[filtered["Step Type"] == "charge"].groupby("group")["voltage"].last().mean()
@@ -544,7 +494,7 @@ def add_cv_steps(
                 "discharge" if "discharge cv" in group_data["Step Type"].unique()[0] else "charge"
             )
             df.loc[group_data.index, "Step Type"] = original_type
-    df.to_csv("ccvv.csv")
+    df.to_csv("PostCCCV_Assignmnet.csv")
     df.drop(columns=["delta_current", "cv_flag", "cv_group", "delta_voltage"], inplace=True)
     return df
 

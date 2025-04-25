@@ -50,6 +50,16 @@ def build_dynamic_rpt_config(base_config, user_input):
                 "test_type": "rpt",
             }
         )
+        rpt_targets.append(
+            {
+                "key": f"crate_{dur}s",
+                "group_type": "discharge",
+                "pulse": True,
+                "interest_variable": "crate",
+                "per_cycle": False,
+                "test_type": "rpt",
+            }
+        )
 
     for crate in user_input.get("special_crates", []):
         rpt_targets.append(

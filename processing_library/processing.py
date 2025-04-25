@@ -10,6 +10,7 @@ from processing_library.analysis_aggregator import find_parameters_for_section
 
 # Import from your refactored modules
 from processing_library.config_builder import build_config_for_test_type
+from processing_library.custom_processing import dcir_processing
 from processing_library.feature_extraction import (
     add_cv_steps,
     assign_cycle_keys,
@@ -119,7 +120,7 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
             "relative_energy": None,
             "coulombic_efficiency": None,
             "energy_efficiency": None,
-            "crate": 0,
+            "crate": gdf["current"].mean() / capacity if capacity else None,
             "soc": round(gdf["soc"].iloc[0]),
             "group_type": None,
             "ch_energy_throughput": None,
@@ -276,34 +277,40 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
         if gd["pulse"]:
 
             s_i, e_i = gd["start_index"], gd["end_index"]
-            sub_df = df.loc[s_i:e_i]
-            v1 = sub_df["voltage"].iloc[0]
-            I = sub_df["current"].mean()
             for dur in pulse_durations:
-                start_t = sub_df["time"].iloc[0]
-                cutoff = start_t + dur
-                after = sub_df[sub_df["time"] >= cutoff]
-                if not after.empty:
-                    v2 = after["voltage"].iloc[0]
-                    dv = v1 - v2
-                    if abs(I) > 1e-6:
-                        ohms = dv / abs(I)
-                        mOhms = ohms * 1000
-                        gd[f"internal_resistance_{dur}s"] = mOhms
+                dcir = dcir_processing(df, s_i, e_i, dur, client="daimler_truck")
+                gd[f"internal_resistance_{dur}s"] = dcir
+                # sub_df = df.loc[s_i:e_i]
+                # v1 = df["voltage"].iloc[gd["start_index"]-1]
+                # pulsev = sub_df["voltage"].iloc[0]
+                # print('current group', v1)
+                # print('-----------')
+                # print('prev group', pulsev)
+                # print('-----------')
+                # print('sub df', sub_df[['voltage', 'time', 'current']])
+                # I = sub_df["current"].max()
+                # for dur in pulse_durations:
+                #     start_t = sub_df["time"].iloc[0]
+                #     cutoff = start_t + dur
+                #     after = sub_df[sub_df["time"] >= cutoff]
+                #     if not after.empty:
+                #         v2 = after["voltage"].iloc[0]
+                #         dv = v1 - v2
+                #         if abs(I) > 1e-6:
+                #             ohms = dv / abs(I)
+                #             mOhms = ohms * 1000
+                #             gd[f"internal_resistance_{dur}s"] = mOhms
+                #             print(f"Internal resistance for {dur}s pulse: {mOhms} mOhm with current {I}A at {v1}V")
 
-                        # Check for first pulse for normalization
-                        if dcir_normalization and len(dcir_normalization) == 2:
-                            target_dur = dcir_normalization[1]
-                            target_soc = dcir_normalization[0]
-                            if (
-                                dur == target_dur
-                                and abs(gd["soc"] - target_soc) <= 1
-                                and not first_pulse
-                            ):
-                                first_dcir = mOhms
-                                first_pulse = True
-                    else:
-                        gd[f"internal_resistance_{dur}s"] = None
+                # Check for first pulse for normalization
+                if dcir_normalization and len(dcir_normalization) == 2:
+                    target_dur = dcir_normalization[1]
+                    target_soc = dcir_normalization[0]
+                    if dur == target_dur and abs(gd["soc"] - target_soc) <= 1 and not first_pulse:
+                        first_dcir = dcir
+                        first_pulse = True
+            else:
+                gd[f"internal_resistance_{dur}s"] = None
 
     # ### VOLTAGE RELAXATION AFTER PULSE ###
     if user_input and user_input.get("voltage_relaxation", False):
@@ -327,17 +334,6 @@ def data_extractor(df, capacity, config, test_type, is_rpt, user_input=None):
 
     # Assign cycle keys
     group_data, _ = assign_cycle_keys(group_data)
-    # Print the first 100 non-rest groups
-    non_rest_groups = [gd for gd in group_data if gd["group_type"] != "rest"]
-    for group in non_rest_groups[:100]:
-        print("cycle", group["cycle"])
-        print("test typpe", group["test_type"])
-        print("group type", group["group_type"])
-        print("pulse", group["pulse"])
-        print("duration", group["duration"])
-        print("crate", group["crate"])
-        print("capacity", group["capacity"])
-        print("----------------------")
     # Calculate coulombic and energy efficiency
     group_data = calculate_coulombic_and_energy_eff(group_data)
 
